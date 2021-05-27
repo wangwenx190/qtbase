@@ -209,6 +209,7 @@ class Q_WIDGETS_EXPORT QWidget : public QObject, public QPaintDevice
     Q_PROPERTY(QLocale locale READ locale WRITE setLocale RESET unsetLocale)
     Q_PROPERTY(QString windowFilePath READ windowFilePath WRITE setWindowFilePath)
     Q_PROPERTY(Qt::InputMethodHints inputMethodHints READ inputMethodHints WRITE setInputMethodHints)
+    Q_PROPERTY(bool hitTestVisibleInChrome READ hitTestVisibleInChrome WRITE setHitTestVisibleInChrome NOTIFY hitTestVisibleInChromeChanged)
 
 public:
     enum RenderFlag {
@@ -614,6 +615,7 @@ Q_SIGNALS:
     void windowIconChanged(const QIcon &icon);
     void windowIconTextChanged(const QString &iconText);
     void customContextMenuRequested(const QPoint &pos);
+    void hitTestVisibleInChromeChanged(bool arg);
 
 protected:
     // Event handlers
@@ -671,6 +673,9 @@ public:
 
     Qt::InputMethodHints inputMethodHints() const;
     void setInputMethodHints(Qt::InputMethodHints hints);
+
+    bool hitTestVisibleInChrome() const;
+    void setHitTestVisibleInChrome(bool value);
 
 protected Q_SLOTS:
     void updateMicroFocus(Qt::InputMethodQuery query = Qt::ImQueryAll);

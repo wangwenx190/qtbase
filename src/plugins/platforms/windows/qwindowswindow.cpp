@@ -86,6 +86,9 @@
 
 QT_BEGIN_NAMESPACE
 
+// The thickness of an auto-hide taskbar in pixels.
+static const int kAutoHideTaskbarThicknessPx = 2;
+
 using QWindowCreationContextPtr = QSharedPointer<QWindowCreationContext>;
 
 enum {
@@ -694,9 +697,7 @@ void WindowCreationData::fromWindow(const QWindow *w, const Qt::WindowFlags flag
     if (popup || (type == Qt::ToolTip) || (type == Qt::SplashScreen)) {
         style = WS_POPUP;
     } else if (topLevel) {
-        if (flags & Qt::FramelessWindowHint)
-            style = WS_POPUP;                // no border
-        else if (flags & Qt::WindowTitleHint)
+        if (flags & Qt::WindowTitleHint)
             style = WS_OVERLAPPED;
         else
             style = 0;
@@ -779,8 +780,7 @@ QWindowsWindowData
     // Capture events before CreateWindowEx() returns. The context is cleared in
     // the QWindowsWindow constructor.
     const QWindowCreationContextPtr context(new QWindowCreationContext(w, screen, data.geometry,
-                                                                       rect, data.customMargins,
-                                                                       style, exStyle));
+                                                                       rect, style, exStyle));
     QWindowsContext::instance()->setWindowCreationContext(context);
 
     const bool hasFrame = (style & (WS_DLGFRAME | WS_THICKFRAME));
@@ -792,7 +792,6 @@ QWindowsWindowData
         << '\n' << *this << "\nrequested: " << rect << ": "
         << context->frameWidth << 'x' <<  context->frameHeight
         << '+' << context->frameX << '+' << context->frameY
-        << " custom margins: " << context->customMargins
         << " invisible margins: " << invMargins;
 
 
@@ -839,7 +838,6 @@ QWindowsWindowData
     result.fullFrameMargins = context->margins;
     result.embedded = embedded;
     result.hasFrame = hasFrame;
-    result.customMargins = context->customMargins;
 
     return result;
 }
@@ -992,23 +990,169 @@ QMargins QWindowsGeometryHint::frame(const QWindow *w, const QRect &geometry,
     return QWindowsGeometryHint::frame(style, exStyle, dpi);
 }
 
-bool QWindowsGeometryHint::handleCalculateSize(const QMargins &customMargins, const MSG &msg, LRESULT *result)
+static inline int getSizeFrameWidth(const QPlatformWindow *window, const bool x)
 {
-    // NCCALCSIZE_PARAMS structure if wParam==TRUE
-    if (!msg.wParam || customMargins.isNull())
+    // Although Microsoft claims that GetSystemMetrics() is not DPI-aware,
+    // it still returns a scaled value on Windows 7~10.
+    int sizeFrameWidth = GetSystemMetrics(x ? SM_CXSIZEFRAME : SM_CYSIZEFRAME);
+    int paddedBorderWidth = GetSystemMetrics(SM_CXPADDEDBORDER); // There is no SM_CYPADDEDBORDER
+    // But we still use GetSystemMetricsForDpi() if it's available.
+    if (QWindowsContext::user32dll.getSystemMetricsForDpi) {
+        const auto dpi = static_cast<UINT>(qRound(window->screen()->logicalDpi().first));
+        sizeFrameWidth = QWindowsContext::user32dll.getSystemMetricsForDpi(x ? SM_CXSIZEFRAME : SM_CYSIZEFRAME, dpi);
+        paddedBorderWidth = QWindowsContext::user32dll.getSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi);
+    }
+    return (sizeFrameWidth + paddedBorderWidth);
+}
+
+bool QWindowsGeometryHint::handleCalculateSize(const QWindow *w, const MSG &msg, LRESULT *result)
+{
+    if (w->flags() & Qt::FramelessWindowHint) {
+        if (!msg.wParam) {
+            *result = 0;
+            result = nullptr;
+            return true;
+        }
+        bool nonClientAreaExists = false;
+        const auto clientRect = &(reinterpret_cast<LPNCCALCSIZE_PARAMS>(msg.lParam)->rgrc[0]);
+        const bool shouldHaveWindowFrame = (QOperatingSystemVersion::current() >= QOperatingSystemVersion::Windows10);
+        if (shouldHaveWindowFrame) {
+            // Store the original top before the default window proc
+            // applies the default frame.
+            const LONG originalTop = clientRect->top;
+            // Apply the default frame
+            const LRESULT ret = DefWindowProcW(msg.hwnd, WM_NCCALCSIZE, msg.wParam, msg.lParam);
+            if (ret != 0) {
+                *result = ret;
+                result = nullptr;
+                return true;
+            }
+            // Re-apply the original top from before the size of the
+            // default frame was applied.
+            clientRect->top = originalTop;
+        }
+        // We don't need this correction when we're fullscreen. We will
+        // have the WS_POPUP size, so we don't have to worry about
+        // borders, and the default frame will be fine.
+        if (IsMaximized(msg.hwnd) && (w->windowState() != Qt::WindowFullScreen)) {
+            // Windows automatically adds a standard width border to all
+            // sides when a window is maximized. We have to remove it
+            // otherwise the content of our window will be cut-off from
+            // the screen.
+            // The value of border width and border height should be
+            // identical in most cases, it should be 8px when DPI is 96.
+            const int sizeFrameHeight = getSizeFrameWidth(w->handle(), false);
+            clientRect->top += sizeFrameHeight;
+            if (!shouldHaveWindowFrame) {
+                clientRect->bottom -= sizeFrameHeight;
+                const int sizeFrameWidth = getSizeFrameWidth(w->handle(), true);
+                clientRect->left += sizeFrameWidth;
+                clientRect->right -= sizeFrameWidth;
+            }
+            nonClientAreaExists = true;
+        }
+        // Attempt to detect if there's an autohide taskbar, and if
+        // there is, reduce our size a bit on the side with the taskbar,
+        // so the user can still mouse-over the taskbar to reveal it.
+        // Make sure to use MONITOR_DEFAULTTONEAREST, so that this will
+        // still find the right monitor even when we're restoring from
+        // minimized.
+        if (IsMaximized(msg.hwnd)) {
+            APPBARDATA abd;
+            SecureZeroMemory(&abd, sizeof(abd));
+            abd.cbSize = sizeof(abd);
+            const UINT taskbarState = SHAppBarMessage(ABM_GETSTATE, &abd);
+            // First, check if we have an auto-hide taskbar at all:
+            if (taskbarState & ABS_AUTOHIDE) {
+                bool top = false, bottom = false, left = false, right = false;
+                // Due to ABM_GETAUTOHIDEBAREX only exists from Win8.1,
+                // we have to use another way to judge this if we are
+                // running on Windows 7 or Windows 8.
+                if (QOperatingSystemVersion::current() >= QOperatingSystemVersion::Windows8_1) {
+                    MONITORINFO monitorInfo;
+                    SecureZeroMemory(&monitorInfo, sizeof(monitorInfo));
+                    monitorInfo.cbSize = sizeof(monitorInfo);
+                    const HMONITOR monitor = MonitorFromWindow(msg.hwnd, MONITOR_DEFAULTTONEAREST);
+                    GetMonitorInfoW(monitor, &monitorInfo);
+                    // This helper can be used to determine if there's a
+                    // auto-hide taskbar on the given edge of the monitor
+                    // we're currently on.
+                    const auto hasAutohideTaskbar = [&monitorInfo](const UINT edge) -> bool {
+                        APPBARDATA _abd;
+                        SecureZeroMemory(&_abd, sizeof(_abd));
+                        _abd.cbSize = sizeof(_abd);
+                        _abd.uEdge = edge;
+                        _abd.rc = monitorInfo.rcMonitor;
+                        const auto hTaskbar = reinterpret_cast<HWND>(SHAppBarMessage(ABM_GETAUTOHIDEBAREX, &_abd));
+                        return hTaskbar != nullptr;
+                    };
+                    top = hasAutohideTaskbar(ABE_TOP);
+                    bottom = hasAutohideTaskbar(ABE_BOTTOM);
+                    left = hasAutohideTaskbar(ABE_LEFT);
+                    right = hasAutohideTaskbar(ABE_RIGHT);
+                } else {
+                    // The following code is copied from Mozilla Firefox,
+                    // with some modifications.
+                    int edge = -1;
+                    APPBARDATA _abd;
+                    SecureZeroMemory(&_abd, sizeof(_abd));
+                    _abd.cbSize = sizeof(_abd);
+                    _abd.hWnd = FindWindowW(L"Shell_TrayWnd", nullptr);
+                    if (_abd.hWnd) {
+                        const HMONITOR windowMonitor = MonitorFromWindow(msg.hwnd, MONITOR_DEFAULTTONEAREST);
+                        const HMONITOR taskbarMonitor = MonitorFromWindow(_abd.hWnd, MONITOR_DEFAULTTOPRIMARY);
+                        if (taskbarMonitor == windowMonitor) {
+                            SHAppBarMessage(ABM_GETTASKBARPOS, &_abd);
+                            edge = _abd.uEdge;
+                        }
+                    }
+                    top = edge == ABE_TOP;
+                    bottom = edge == ABE_BOTTOM;
+                    left = edge == ABE_LEFT;
+                    right = edge == ABE_RIGHT;
+                }
+                // If there's a taskbar on any side of the monitor, reduce
+                // our size a little bit on that edge.
+                // Note to future code archeologists:
+                // This doesn't seem to work for fullscreen on the primary
+                // display. However, testing a bunch of other apps with
+                // fullscreen modes and an auto-hiding taskbar has
+                // shown that _none_ of them reveal the taskbar from
+                // fullscreen mode. This includes Edge, Firefox, Chrome,
+                // Sublime Text, PowerPoint - none seemed to support this.
+                // This does however work fine for maximized.
+                if (top) {
+                    // Peculiarly, when we're fullscreen,
+                    clientRect->top += kAutoHideTaskbarThicknessPx;
+                    nonClientAreaExists = true;
+                } else if (bottom) {
+                    clientRect->bottom -= kAutoHideTaskbarThicknessPx;
+                    nonClientAreaExists = true;
+                } else if (left) {
+                    clientRect->left += kAutoHideTaskbarThicknessPx;
+                    nonClientAreaExists = true;
+                } else if (right) {
+                    clientRect->right -= kAutoHideTaskbarThicknessPx;
+                    nonClientAreaExists = true;
+                }
+            }
+        }
+        // If the window bounds change, we're going to relayout and repaint
+        // anyway. Returning WVR_REDRAW avoids an extra paint before that of
+        // the old client pixels in the (now wrong) location, and thus makes
+        // actions like resizing a window from the left edge look slightly
+        // less broken.
+        //
+        // We cannot return WVR_REDRAW when there is nonclient area, or
+        // Windows exhibits bugs where client pixels and child HWNDs are
+        // mispositioned by the width/height of the upper-left nonclient
+        // area.
+        *result = nonClientAreaExists ? 0 : WVR_REDRAW;
+        result = nullptr;
+        return true;
+    } else {
         return false;
-    *result = DefWindowProc(msg.hwnd, msg.message, msg.wParam, msg.lParam);
-    auto *ncp = reinterpret_cast<NCCALCSIZE_PARAMS *>(msg.lParam);
-    const RECT oldClientArea = ncp->rgrc[0];
-    ncp->rgrc[0].left += customMargins.left();
-    ncp->rgrc[0].top += customMargins.top();
-    ncp->rgrc[0].right -= customMargins.right();
-    ncp->rgrc[0].bottom -= customMargins.bottom();
-    result = nullptr;
-    qCDebug(lcQpaWindows).nospace() << __FUNCTION__ << oldClientArea << '+' << customMargins << "-->"
-        << ncp->rgrc[0] << ' ' << ncp->rgrc[1] << ' ' << ncp->rgrc[2]
-        << ' ' << ncp->lppos->cx << ',' << ncp->lppos->cy;
-    return true;
+    }
 }
 
 void QWindowsGeometryHint::frameSizeConstraints(const QWindow *w, const QScreen *screen,
@@ -1284,7 +1428,6 @@ void QWindowsForeignWindow::setVisible(bool visible)
 
 QWindowCreationContext::QWindowCreationContext(const QWindow *w, const QScreen *s,
                                                const QRect &geometryIn, const QRect &geometry,
-                                               const QMargins &cm,
                                                DWORD style, DWORD exStyle) :
     window(w),
     screen(s),
@@ -1292,8 +1435,7 @@ QWindowCreationContext::QWindowCreationContext(const QWindow *w, const QScreen *
     requestedGeometry(geometry),
     obtainedPos(geometryIn.topLeft()),
     obtainedSize(geometryIn.size()),
-    margins(QWindowsGeometryHint::frame(w, geometry, style, exStyle)),
-    customMargins(cm)
+    margins(QWindowsGeometryHint::frame(w, geometry, style, exStyle))
 {
     // Geometry of toplevels does not consider window frames.
     // TODO: No concept of WA_wasMoved yet that would indicate a
@@ -1303,7 +1445,7 @@ QWindowCreationContext::QWindowCreationContext(const QWindow *w, const QScreen *
         || !qt_window_private(const_cast<QWindow *>(w))->resizeAutomatic) {
         frameX = geometry.x();
         frameY = geometry.y();
-        const QMargins effectiveMargins = margins + customMargins;
+        const QMargins effectiveMargins = margins;
         frameWidth = effectiveMargins.left() + geometry.width() + effectiveMargins.right();
         frameHeight = effectiveMargins.top() + geometry.height() + effectiveMargins.bottom();
         if (QWindowsMenuBar::menuBarOf(w) != nullptr) {
@@ -1321,13 +1463,12 @@ QWindowCreationContext::QWindowCreationContext(const QWindow *w, const QScreen *
         << __FUNCTION__ << ' ' << w << ' ' << geometry
         << " pos incl. frame=" << QWindowsGeometryHint::positionIncludesFrame(w)
         << " frame=" << frameWidth << 'x' << frameHeight << '+'
-        << frameX << '+' << frameY
-        << " margins=" << margins << " custom margins=" << customMargins;
+        << frameX << '+' << frameY << " margins=" << margins;
 }
 
 void QWindowCreationContext::applyToMinMaxInfo(MINMAXINFO *mmi) const
 {
-    QWindowsGeometryHint::applyToMinMaxInfo(window, screen, margins + customMargins, mmi);
+    QWindowsGeometryHint::applyToMinMaxInfo(window, screen, margins, mmi);
 }
 
 /*!
@@ -1592,8 +1733,7 @@ QWindowsWindowData
     WindowCreationData creationData;
     creationData.fromWindow(w, parameters.flags);
     QWindowsWindowData result = creationData.create(w, parameters, title);
-    // Force WM_NCCALCSIZE (with wParam=1) via SWP_FRAMECHANGED for custom margin.
-    creationData.initialize(w, result.hwnd, !parameters.customMargins.isNull(), 1);
+    creationData.initialize(w, result.hwnd, false, 1);
     return result;
 }
 
@@ -1866,8 +2006,7 @@ QRect QWindowsWindow::normalGeometry() const
 static QString msgUnableToSetGeometry(const QWindowsWindow *platformWindow,
                                       const QRect &requestedRect,
                                       const QRect &obtainedRect,
-                                      const QMargins &fullMargins,
-                                      const QMargins &customMargins)
+                                      const QMargins &fullMargins)
 {
     QString result;
     QDebug debug(&result);
@@ -1886,10 +2025,6 @@ static QString msgUnableToSetGeometry(const QWindowsWindow *platformWindow,
     formatBriefRectangle(debug, obtainedRect + fullMargins);
     debug << ") margins: ";
     formatBriefMargins(debug, fullMargins);
-    if (!customMargins.isNull()) {
-       debug << " custom margin: ";
-       formatBriefMargins(debug, customMargins);
-    }
     const auto minimumSize = window->minimumSize();
     const bool hasMinimumSize = !minimumSize.isEmpty();
     if (hasMinimumSize)
@@ -1928,8 +2063,7 @@ void QWindowsWindow::setGeometry(const QRect &rectIn)
         clearFlag(WithinSetGeometry);
         if (m_data.geometry != rect && (isVisible() || QLibraryInfo::isDebugBuild())) {
             const auto warning =
-                msgUnableToSetGeometry(this, rectIn, m_data.geometry,
-                                       m_data.fullFrameMargins, m_data.customMargins);
+                msgUnableToSetGeometry(this, rectIn, m_data.geometry, m_data.fullFrameMargins);
             qWarning("%s: %s", __FUNCTION__, qPrintable(warning));
         }
     } else {
@@ -2138,7 +2272,7 @@ bool QWindowsWindow::handleWmPaint(HWND hwnd, UINT message,
     if (testFlag(OpenGLSurface) && (isSoftwareGl() || !dwmIsCompositionEnabled()))
         InvalidateRect(hwnd, nullptr, false);
 
-    BeginPaint(hwnd, &ps);
+    const HDC hdc = BeginPaint(hwnd, &ps);
 
     // Observed painting problems with Aero style disabled (QTBUG-7865).
     if (Q_UNLIKELY(!dwmIsCompositionEnabled())
@@ -2147,6 +2281,65 @@ bool QWindowsWindow::handleWmPaint(HWND hwnd, UINT message,
             || testFlag(Direct3DSurface)))
     {
         SelectClipRgn(ps.hdc, nullptr);
+    }
+
+    // Special handling part when Qt::FramelessWindowHint is enabled:
+    //
+    // We removed the whole top part of the frame (see handling of
+    // WM_NCCALCSIZE) so the top border is missing now. We add it back here.
+    // Note #1: You might wonder why we don't remove just the title bar instead
+    //  of removing the whole top part of the frame and then adding the little
+    //  top border back. I tried to do this but it didn't work: DWM drew the
+    //  whole title bar anyways on top of the window. It seems that DWM only
+    //  wants to draw either nothing or the whole top part of the frame.
+    // Note #2: For some reason if you try to set the top margin to just the
+    //  top border height (what we want to do), then there is a transparency
+    //  bug when the window is inactive, so I've decided to add the whole top
+    //  part of the frame instead and then we will hide everything that we
+    //  don't need (that is, the whole thing but the little 1 pixel wide border
+    //  at the top) in the WM_PAINT handler. This eliminates the transparency
+    //  bug and it's what a lot of Win32 apps that customize the title bar do
+    //  so it should work fine.
+    //
+    // We can only do this on Windows 10 because the frame border is only 1px
+    // width when DPI is 96. It will become 8px on Win7~8.1 so the window will
+    // look very strange if you still preserve the frame borders. So we just
+    // get rid of the whole window frame on these systems. We don't need this
+    // WM_PAINT hack in that case. It can't draw the top border successfully
+    // on these systems either.
+    if ((m_data.flags & Qt::FramelessWindowHint)
+            && (QOperatingSystemVersion::current() >= QOperatingSystemVersion::Windows10)) {
+        LONG topBorderHeight = 0;
+        if (dwmIsCompositionEnabled() && (m_windowState == Qt::WindowNoState)) {
+            topBorderHeight = 1;
+        }
+        if (ps.rcPaint.top < topBorderHeight) {
+            RECT rcTopBorder = ps.rcPaint;
+            rcTopBorder.bottom = topBorderHeight;
+            // To show the original top border, we have to paint on top
+            // of it with the alpha component set to 0. This page
+            // recommends to paint the area in black using the stock
+            // BLACK_BRUSH to do this:
+            // https://docs.microsoft.com/en-us/windows/win32/dwm/customframe#extending-the-client-frame
+            FillRect(hdc, &rcTopBorder, reinterpret_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));
+        }
+        if (ps.rcPaint.bottom > topBorderHeight) {
+            RECT rcRest = ps.rcPaint;
+            rcRest.top = topBorderHeight;
+            // To hide the original title bar, we have to paint on top
+            // of it with the alpha component set to 255. This is a hack
+            // to do it with GDI. See UpdateFrameMarginsForWindow for
+            // more information.
+            HDC opaqueDc = nullptr;
+            BP_PAINTPARAMS params;
+            SecureZeroMemory(&params, sizeof(params));
+            params.cbSize = sizeof(params);
+            params.dwFlags = BPPF_NOCLIP | BPPF_ERASE;
+            const HPAINTBUFFER buf = BeginBufferedPaint(hdc, &rcRest, BPBF_TOPDOWNDIB, &params, &opaqueDc);
+            FillRect(opaqueDc, &rcRest, reinterpret_cast<HBRUSH>(GetClassLongPtrW(hwnd, GCLP_HBRBACKGROUND)));
+            BufferedPaintSetAlpha(buf, nullptr, 255);
+            EndBufferedPaint(buf, TRUE);
+        }
     }
 
     // If the a window is obscured by another window (such as a child window)
@@ -2505,7 +2698,7 @@ void QWindowsWindow::calculateFullFrameMargins()
     const auto systemMargins = testFlag(DisableNonClientScaling)
         ? QWindowsGeometryHint::frameOnPrimaryScreen(m_data.hwnd)
         : frameMargins_sys();
-    setFullFrameMargins(systemMargins + m_data.customMargins);
+    setFullFrameMargins(systemMargins);
 }
 
 QMargins QWindowsWindow::frameMargins() const
@@ -2712,50 +2905,12 @@ void QWindowsWindow::setFrameStrutEventsEnabled(bool enabled)
     }
 }
 
-static int getBorderWidth(const QPlatformScreen *screen)
-{
-    NONCLIENTMETRICS ncm;
-    QWindowsContext::nonClientMetricsForScreen(&ncm, screen);
-    return ncm.iBorderWidth + ncm.iPaddedBorderWidth + 2;
-}
-
 void QWindowsWindow::getSizeHints(MINMAXINFO *mmi) const
 {
     // We don't apply the min/max size hint as we change the dpi, because we did not adjust the
     // QScreen of the window yet so we don't have the min/max with the right ratio
     if (!testFlag(QWindowsWindow::WithinDpiChanged))
         QWindowsGeometryHint::applyToMinMaxInfo(window(), fullFrameMargins(), mmi);
-
-    // This block fixes QTBUG-8361, QTBUG-4362: Frameless/title-less windows shouldn't cover the
-    // taskbar when maximized
-    if ((testFlag(WithinMaximize) || window()->windowStates().testFlag(Qt::WindowMinimized))
-        && (m_data.flags.testFlag(Qt::FramelessWindowHint)
-            || (m_data.flags.testFlag(Qt::CustomizeWindowHint) && !m_data.flags.testFlag(Qt::WindowTitleHint)))) {
-        const QScreen *screen = window()->screen();
-
-        // Documentation of MINMAXINFO states that it will only work for the primary screen
-        if (screen && screen == QGuiApplication::primaryScreen()) {
-            const QRect availableGeometry = QHighDpi::toNativePixels(screen->availableGeometry(), screen);
-            mmi->ptMaxSize.y = availableGeometry.height();
-
-            // Width, because you can have the taskbar on the sides too.
-            mmi->ptMaxSize.x = availableGeometry.width();
-
-            // If you have the taskbar on top, or on the left you don't want it at (0,0):
-            mmi->ptMaxPosition.x = availableGeometry.x();
-            mmi->ptMaxPosition.y = availableGeometry.y();
-            if (!m_data.flags.testFlag(Qt::FramelessWindowHint)) {
-                const int borderWidth = getBorderWidth(screen->handle());
-                mmi->ptMaxSize.x += borderWidth * 2;
-                mmi->ptMaxSize.y += borderWidth * 2;
-                mmi->ptMaxTrackSize = mmi->ptMaxSize;
-                mmi->ptMaxPosition.x -= borderWidth;
-                mmi->ptMaxPosition.y -= borderWidth;
-            }
-        } else if (!screen){
-            qWarning("window()->screen() returned a null screen");
-        }
-    }
 
     qCDebug(lcQpaWindows) << __FUNCTION__ << window() << *mmi;
 }
@@ -3010,32 +3165,15 @@ void QWindowsWindow::setMenuBar(QWindowsMenuBar *mb)
     m_menuBar = mb;
 }
 
-/*!
-    \brief Sets custom margins to be added to the default margins determined by
-    the windows style in the handling of the WM_NCCALCSIZE message.
-
-    This is currently used to give the Aero-style QWizard a smaller top margin.
-    The property can be set using QPlatformNativeInterface::setWindowProperty() or,
-    before platform window creation, by setting a dynamic property
-    on the QWindow (see QWindowsIntegration::createPlatformWindow()).
-*/
+QMargins QWindowsWindow::customMargins() const
+{
+    return {};
+}
 
 void QWindowsWindow::setCustomMargins(const QMargins &newCustomMargins)
 {
-    if (newCustomMargins != m_data.customMargins) {
-        const QMargins oldCustomMargins = m_data.customMargins;
-        m_data.customMargins = newCustomMargins;
-         // Re-trigger WM_NCALCSIZE with wParam=1 by passing SWP_FRAMECHANGED
-        const QRect currentFrameGeometry = frameGeometry_sys();
-        const QPoint topLeft = currentFrameGeometry.topLeft();
-        QRect newFrame = currentFrameGeometry.marginsRemoved(oldCustomMargins) + m_data.customMargins;
-        newFrame.moveTo(topLeft);
-        qCDebug(lcQpaWindows) << __FUNCTION__ << oldCustomMargins << "->" << newCustomMargins
-            << currentFrameGeometry << "->" << newFrame;
-        SetWindowPos(m_data.hwnd, nullptr, newFrame.x(), newFrame.y(), newFrame.width(), newFrame.height(), SWP_NOZORDER | SWP_FRAMECHANGED | SWP_NOACTIVATE);
-    }
+    Q_UNUSED(newCustomMargins);
 }
-
 void *QWindowsWindow::surface(void *nativeConfig, int *err)
 {
 #if QT_CONFIG(vulkan)

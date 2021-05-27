@@ -136,6 +136,8 @@ class Q_GUI_EXPORT QWindow : public QObject, public QSurface
     Q_PRIVATE_PROPERTY(QWindow::d_func(), QWindow* transientParent MEMBER transientParent
                        WRITE setTransientParent NOTIFY transientParentChanged REVISION(2, 13))
 #endif
+    Q_PROPERTY(int titleBarHeight READ titleBarHeight WRITE setTitleBarHeight NOTIFY titleBarHeightChanged)
+    Q_PROPERTY(int resizeBorderThickness READ resizeBorderThickness WRITE setResizeBorderThickness NOTIFY resizeBorderThicknessChanged)
 
 public:
     enum Visibility {
@@ -289,6 +291,12 @@ public:
     QVulkanInstance *vulkanInstance() const;
 #endif
 
+    int titleBarHeight() const;
+    void setTitleBarHeight(int value);
+
+    int resizeBorderThickness() const;
+    void setResizeBorderThickness(int value);
+
     QT_DECLARE_NATIVE_INTERFACE_ACCESSOR
 
 public Q_SLOTS:
@@ -355,6 +363,9 @@ Q_SIGNALS:
     Q_REVISION(2, 1) void opacityChanged(qreal opacity);
 
     Q_REVISION(2, 13) void transientParentChanged(QWindow *transientParent);
+
+    void titleBarHeightChanged(int arg);
+    void resizeBorderThicknessChanged(int arg);
 
 protected:
     virtual void exposeEvent(QExposeEvent *);

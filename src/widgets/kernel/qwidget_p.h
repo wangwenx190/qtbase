@@ -764,6 +764,8 @@ public:
     uint childrenHiddenByWState : 1;
     uint childrenShownByExpose : 1;
 
+    bool hitTestVisibleInChrome = false;
+
     // *************************** Platform specific ************************************
 #if defined(Q_OS_WIN)
     uint noPaintOnScreen : 1; // see qwidget.cpp ::paintEngine()

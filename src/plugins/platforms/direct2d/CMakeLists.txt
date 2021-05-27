@@ -72,6 +72,7 @@ qt_internal_add_plugin(QWindowsDirect2DIntegrationPlugin
         winmm
         winspool
         wtsapi32
+        uxtheme
 )
 
 # Resources:

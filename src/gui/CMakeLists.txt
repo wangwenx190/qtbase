@@ -137,6 +137,7 @@ qt_internal_add_module(Gui
         kernel/qwindow.cpp kernel/qwindow.h kernel/qwindow_p.h
         kernel/qwindowdefs.h
         kernel/qwindowsysteminterface.cpp kernel/qwindowsysteminterface.h kernel/qwindowsysteminterface_p.h
+        kernel/qwindowchrome_p.h kernel/qwindowchrome.cpp
         math3d/qgenericmatrix.cpp math3d/qgenericmatrix.h
         math3d/qmatrix4x4.cpp math3d/qmatrix4x4.h
         math3d/qquaternion.cpp math3d/qquaternion.h
@@ -389,6 +390,7 @@ qt_internal_extend_target(Gui CONDITION WIN32
     SOURCES
         image/qpixmap_win.cpp
         kernel/qwindowdefs_win.h
+        kernel/qwindowchrome_win32.cpp
         platform/windows/qwindowsguieventdispatcher.cpp platform/windows/qwindowsguieventdispatcher_p.h
         platform/windows/qwindowsmime_p.h
         platform/windows/qwindowsnativeinterface.cpp
@@ -404,6 +406,7 @@ qt_internal_extend_target(Gui CONDITION WIN32
         ole32
         shell32
         user32
+        dwmapi # TODO: Remove once Win7 support is officially dropped.
     PUBLIC_LIBRARIES
         d3d11
         dxgi

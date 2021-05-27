@@ -220,6 +220,7 @@ void QWindowsUser32DLL::init()
         getWindowDpiAwarenessContext = (GetWindowDpiAwarenessContext)library.resolve("GetWindowDpiAwarenessContext");
         getAwarenessFromDpiAwarenessContext = (GetAwarenessFromDpiAwarenessContext)library.resolve("GetAwarenessFromDpiAwarenessContext");
         systemParametersInfoForDpi = (SystemParametersInfoForDpi)library.resolve("SystemParametersInfoForDpi");
+        getSystemMetricsForDpi = (GetSystemMetricsForDpi)library.resolve("GetSystemMetricsForDpi");
     }
 }
 
@@ -1299,10 +1300,9 @@ bool QWindowsContext::windowsProc(HWND hwnd, UINT message,
                 enableNonClientDpiScaling(msg.hwnd);
             return false;
         case QtWindows::CalculateSize:
-            return QWindowsGeometryHint::handleCalculateSize(d->m_creationContext->customMargins, msg, result);
+            return QWindowsGeometryHint::handleCalculateSize(d->m_creationContext->window, msg, result);
         case QtWindows::GeometryChangingEvent:
-            return QWindowsWindow::handleGeometryChangingMessage(&msg, d->m_creationContext->window,
-                                                                 d->m_creationContext->margins + d->m_creationContext->customMargins);
+            return QWindowsWindow::handleGeometryChangingMessage(&msg, d->m_creationContext->window, d->m_creationContext->margins);
         default:
             break;
         }
@@ -1364,7 +1364,7 @@ bool QWindowsContext::windowsProc(HWND hwnd, UINT message,
         platformWindow->getSizeHints(reinterpret_cast<MINMAXINFO *>(lParam));
         return true;// maybe available on some SDKs revisit WM_NCCALCSIZE
     case QtWindows::CalculateSize:
-        return QWindowsGeometryHint::handleCalculateSize(platformWindow->customMargins(), msg, result);
+        return QWindowsGeometryHint::handleCalculateSize(platformWindow->window(), msg, result);
     case QtWindows::NonClientHitTest:
         return platformWindow->handleNonClientHitTest(QPoint(msg.pt.x, msg.pt.y), result);
     case QtWindows::GeometryChangingEvent:

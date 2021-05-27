@@ -48,6 +48,7 @@
 #include <private/qimage_p.h>
 
 #include <QtCore/qdebug.h>
+#include <QtCore/qoperatingsystemversion.h>
 
 QT_BEGIN_NAMESPACE
 
@@ -88,14 +89,19 @@ void QWindowsBackingStore::flush(QWindow *window, const QRegion &region,
 
     const bool hasAlpha = rw->format().hasAlpha();
     const Qt::WindowFlags flags = window->flags();
+    const bool shouldDrawTopFrame = (flags & Qt::FramelessWindowHint)
+            && (window->windowState() == Qt::WindowNoState)
+            && (QOperatingSystemVersion::current() >= QOperatingSystemVersion::Windows10);
+    const int topFrameMargin = shouldDrawTopFrame ? 1 : 0;
     if ((flags & Qt::FramelessWindowHint) && QWindowsWindow::setWindowLayered(rw->handle(), flags, hasAlpha, rw->opacity()) && hasAlpha) {
         // Windows with alpha: Use blend function to update.
         QRect r = QHighDpi::toNativePixels(window->frameGeometry(), window);
+        const QRect r2 = {r.x(), r.y() + topFrameMargin, r.width(), r.height() - topFrameMargin};
         QMargins frameMargins = rw->frameMargins();
         QRect dirtyRect = br.translated(offset + QPoint(frameMargins.left(), frameMargins.top()));
 
-        SIZE size = {r.width(), r.height()};
-        POINT ptDst = {r.x(), r.y()};
+        SIZE size = {r2.width(), r2.height()};
+        POINT ptDst = {r2.x(), r2.y()};
         POINT ptSrc = {0, 0};
         BLENDFUNCTION blend = {AC_SRC_OVER, 0, BYTE(qRound(255.0 * rw->opacity())), AC_SRC_ALPHA};
         RECT dirty = {dirtyRect.x(), dirtyRect.y(),
@@ -105,8 +111,8 @@ void QWindowsBackingStore::flush(QWindow *window, const QRegion &region,
         const BOOL result = UpdateLayeredWindowIndirect(rw->handle(), &info);
         if (!result)
             qErrnoWarning("UpdateLayeredWindowIndirect failed for ptDst=(%d, %d),"
-                          " size=(%dx%d), dirty=(%dx%d %d, %d)", r.x(), r.y(),
-                          r.width(), r.height(), dirtyRect.width(), dirtyRect.height(),
+                          " size=(%dx%d), dirty=(%dx%d %d, %d)", r2.x(), r2.y(),
+                          r2.width(), r2.height(), dirtyRect.width(), dirtyRect.height(),
                           dirtyRect.x(), dirtyRect.y());
     } else {
         const HDC dc = rw->getDC();
@@ -115,8 +121,9 @@ void QWindowsBackingStore::flush(QWindow *window, const QRegion &region,
             return;
         }
 
-        if (!BitBlt(dc, br.x(), br.y(), br.width(), br.height(),
-                    m_image->hdc(), br.x() + offset.x(), br.y() + offset.y(), SRCCOPY)) {
+        const QRect br2 = {br.x(), br.y() + topFrameMargin, br.width(), br.height() - topFrameMargin};
+        if (!BitBlt(dc, br2.x(), br2.y(), br2.width(), br2.height(),
+                    m_image->hdc(), br2.x() + offset.x(), br2.y() + offset.y(), SRCCOPY)) {
             const DWORD lastError = GetLastError(); // QTBUG-35926, QTBUG-29716: may fail after lock screen.
             if (lastError != ERROR_SUCCESS && lastError != ERROR_INVALID_HANDLE)
                 qErrnoWarning(int(lastError), "%s: BitBlt failed", __FUNCTION__);

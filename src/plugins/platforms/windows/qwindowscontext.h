@@ -108,6 +108,7 @@ struct QWindowsUser32DLL
     typedef int  (WINAPI *GetWindowDpiAwarenessContext)(HWND);
     typedef int  (WINAPI *GetAwarenessFromDpiAwarenessContext)(int);
     typedef BOOL (WINAPI *SystemParametersInfoForDpi)(UINT, UINT, PVOID, UINT, UINT);
+    typedef int  (WINAPI *GetSystemMetricsForDpi)(int, UINT);
 
     // Windows pointer functions (Windows 8 or later).
     EnableMouseInPointer enableMouseInPointer = nullptr;
@@ -141,6 +142,7 @@ struct QWindowsUser32DLL
     GetWindowDpiAwarenessContext getWindowDpiAwarenessContext = nullptr;
     GetAwarenessFromDpiAwarenessContext getAwarenessFromDpiAwarenessContext = nullptr;
     SystemParametersInfoForDpi systemParametersInfoForDpi = nullptr;
+    GetSystemMetricsForDpi getSystemMetricsForDpi = nullptr;
 };
 
 // Shell scaling library (Windows 8.1 onwards)

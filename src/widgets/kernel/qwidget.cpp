@@ -90,6 +90,7 @@
 
 #include "qwidget_p.h"
 #include <QtGui/private/qwindow_p.h>
+#include <QtGui/private/qwindowchrome_p.h>
 #if QT_CONFIG(action)
 #  include "QtGui/private/qaction_p.h"
 #endif
@@ -12815,6 +12816,29 @@ void QWidgetPrivate::setNetWmWindowTypes(bool skipIfMissing)
 #endif
 }
 
+bool QWidget::hitTestVisibleInChrome() const
+{
+    Q_D(const QWidget);
+    return d->hitTestVisibleInChrome;
+}
+
+void QWidget::setHitTestVisibleInChrome(bool value)
+{
+    Q_D(QWidget);
+    if (isWindow()) {
+        qWarning() << this << "is a top level window, you can't make it visible to the hit test.";
+        return;
+    }
+    if (d->hitTestVisibleInChrome == value)
+        return;
+    QWindow *win = windowHandle();
+    if (!win)
+        return;
+    WindowChrome::setHitTestNativeParent(win, window());
+    d->hitTestVisibleInChrome = value;
+    Q_EMIT hitTestVisibleInChromeChanged(value);
+}
+
 #ifndef QT_NO_DEBUG_STREAM
 
 static inline void formatWidgetAttributes(QDebug debug, const QWidget *widget)
@@ -12877,4 +12901,3 @@ QDebug operator<<(QDebug debug, const QWidget *widget)
 QT_END_NAMESPACE
 
 #include "moc_qwidget.cpp"
-

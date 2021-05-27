@@ -68,7 +68,8 @@ struct QWindowsGeometryHint
     static QMargins frame(HWND hwnd, DWORD style, DWORD exStyle);
     static QMargins frame(const QWindow *w, const QRect &geometry,
                           DWORD style, DWORD exStyle);
-    static bool handleCalculateSize(const QMargins &customMargins, const MSG &msg, LRESULT *result);
+    static bool handleCalculateSize(const QWindow *w, const MSG &msg,
+                                    LRESULT *result);
     static void applyToMinMaxInfo(const QWindow *w, const QScreen *screen,
                                   const QMargins &margins, MINMAXINFO *mmi);
     static void applyToMinMaxInfo(const QWindow *w, const QMargins &margins,
@@ -88,7 +89,6 @@ struct QWindowCreationContext
 {
     explicit QWindowCreationContext(const QWindow *w, const QScreen *s,
                                     const QRect &geometryIn, const QRect &geometry,
-                                    const QMargins &customMargins,
                                     DWORD style, DWORD exStyle);
     void applyToMinMaxInfo(MINMAXINFO *mmi) const;
 
@@ -101,7 +101,6 @@ struct QWindowCreationContext
     QPoint obtainedPos;
     QSize obtainedSize;
     QMargins margins;
-    QMargins customMargins;  // User-defined, additional frame for WM_NCCALCSIZE
     int frameX = CW_USEDEFAULT; // Passed on to CreateWindowEx(), including frame.
     int frameY = CW_USEDEFAULT;
     int frameWidth = CW_USEDEFAULT;
@@ -114,7 +113,6 @@ struct QWindowsWindowData
     Qt::WindowFlags flags;
     QRect geometry;
     QMargins fullFrameMargins; // Do not use directly for windows, see FrameDirty.
-    QMargins customMargins;    // User-defined, additional frame for NCCALCSIZE
     HWND hwnd = nullptr;
     bool embedded = false;
     bool hasFrame = false;
@@ -307,7 +305,7 @@ public:
     QWindowsMenuBar *menuBar() const;
     void setMenuBar(QWindowsMenuBar *mb);
 
-    QMargins customMargins() const override { return m_data.customMargins; }
+    QMargins customMargins() const override;
     void setCustomMargins(const QMargins &m) override;
 
     void setStyle(unsigned s) const;

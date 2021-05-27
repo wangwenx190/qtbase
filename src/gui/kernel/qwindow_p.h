@@ -181,6 +181,9 @@ public:
 #if QT_CONFIG(vulkan)
     QVulkanInstance *vulkanInstance = nullptr;
 #endif
+
+    int titleBarHeight = 30;
+    int resizeBorderThickness = 8;
 };
 
 

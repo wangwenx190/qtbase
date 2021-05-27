@@ -2607,39 +2607,11 @@ void QWindow::focusOutEvent(QFocusEvent *ev)
 }
 
 /*!
-    Override this to handle mouse press events (\a ev).
-
-    \sa mouseReleaseEvent()
-*/
-void QWindow::mousePressEvent(QMouseEvent *ev)
-{
-    ev->ignore();
-}
-
-/*!
     Override this to handle mouse release events (\a ev).
 
     \sa mousePressEvent()
 */
 void QWindow::mouseReleaseEvent(QMouseEvent *ev)
-{
-    ev->ignore();
-}
-
-/*!
-    Override this to handle mouse double click events (\a ev).
-
-    \sa mousePressEvent(), QStyleHints::mouseDoubleClickInterval()
-*/
-void QWindow::mouseDoubleClickEvent(QMouseEvent *ev)
-{
-    ev->ignore();
-}
-
-/*!
-    Override this to handle mouse move events (\a ev).
-*/
-void QWindow::mouseMoveEvent(QMouseEvent *ev)
 {
     ev->ignore();
 }
@@ -2675,6 +2647,7 @@ void QWindow::tabletEvent(QTabletEvent *ev)
 }
 #endif
 
+#ifndef Q_OS_WINDOWS
 /*!
     Override this to handle platform dependent events.
     Will be given \a eventType, \a message and \a result.
@@ -2691,6 +2664,7 @@ bool QWindow::nativeEvent(const QByteArray &eventType, void *message, qintptr *r
     Q_UNUSED(result);
     return false;
 }
+#endif
 
 /*!
     \fn QPointF QWindow::mapToGlobal(const QPointF &pos) const
@@ -3091,6 +3065,44 @@ QVulkanInstance *QWindow::vulkanInstance() const
 }
 
 #endif // QT_CONFIG(vulkan)
+
+int QWindow::titleBarHeight() const
+{
+    Q_D(const QWindow);
+    return d->titleBarHeight;
+}
+
+void QWindow::setTitleBarHeight(int value)
+{
+    Q_D(QWindow);
+    if (d->titleBarHeight == value)
+        return;
+    if (value <= 0) {
+        qWarning("Set title bar height to %d is not allowed.", value);
+        return;
+    }
+    d->titleBarHeight = value;
+    Q_EMIT titleBarHeightChanged(value);
+}
+
+int QWindow::resizeBorderThickness() const
+{
+    Q_D(const QWindow);
+    return d->resizeBorderThickness;
+}
+
+void QWindow::setResizeBorderThickness(int value)
+{
+    Q_D(QWindow);
+    if (d->resizeBorderThickness == value)
+        return;
+    if (value <= 0) {
+        qWarning("Set resize border thickness to %d is not allowed.", value);
+        return;
+    }
+    d->resizeBorderThickness = value;
+    Q_EMIT resizeBorderThicknessChanged(value);
+}
 
 QT_END_NAMESPACE
 

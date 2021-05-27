@@ -84,6 +84,14 @@
 #  define DPI_AWARENESS_CONTEXT_UNAWARE_GDISCALED    ((HANDLE)-5)
 #endif
 
+#ifndef ABM_GETAUTOHIDEBAREX
+#  define ABM_GETAUTOHIDEBAREX 0x0000000b
+#endif
+
+#ifndef IsMaximized
+#  define IsMaximized(hwnd) IsZoomed(hwnd)
+#endif
+
 QT_BEGIN_NAMESPACE
 
 namespace QtWindows
