@@ -42,9 +42,10 @@ public:
         DontUseColorFonts = QWindowsFontDatabase::DontUseColorFonts,
         AlwaysUseNativeMenus = 0x100,
         NoNativeMenus = 0x200,
-        DetectAltGrModifier = 0x400,
-        RtlEnabled = 0x0800,
-        FontDatabaseGDI = 0x1000
+        DontUseWMPointer = 0x400,
+        DetectAltGrModifier = 0x800,
+        RtlEnabled = 0x1000,
+        FontDatabaseGDI = 0x2000
     };
 
     explicit QWindowsIntegration(const QStringList &paramList);

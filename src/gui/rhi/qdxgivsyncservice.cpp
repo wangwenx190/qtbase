@@ -10,10 +10,13 @@
 #include <QScreen>
 #include <QVarLengthArray>
 #include <QtCore/private/qsystemerror_p.h>
+#include <QtCore/private/qsystemlibrary_p.h>
 
 QT_BEGIN_NAMESPACE
 
-Q_STATIC_LOGGING_CATEGORY(lcQpaScreenUpdates, "qt.qpa.screen.updates", QtCriticalMsg);
+Q_STATIC_LOGGING_CATEGORY(lcQpaScreenUpdates, "qt.qpa.screen.updates", QtWarningMsg);
+
+using namespace Qt::StringLiterals;
 
 class QDxgiVSyncThread : public QThread
 {
@@ -106,7 +109,7 @@ QDxgiVSyncService::~QDxgiVSyncService()
     // Deadlock is almost guaranteed if we try to clean up here, when the global static is being destructed.
     // Must have been done earlier.
     if (dxgiFactory)
-        qWarning("QDxgiVSyncService not destroyed in time");
+        qCWarning(lcQpaScreenUpdates, "QDxgiVSyncService not destroyed in time");
 }
 
 void QDxgiVSyncService::global_destroy()
@@ -159,7 +162,7 @@ void QDxgiVSyncService::beginFrame(LUID)
     // else, then start from scratch.
 
     if (dxgiFactory && !dxgiFactory->IsCurrent()) {
-        qWarning("QDxgiVSyncService: DXGI Factory is no longer Current");
+        qCWarning(lcQpaScreenUpdates, "QDxgiVSyncService: DXGI Factory is no longer Current");
         QVarLengthArray<LUID, 8> luids;
         for (auto it = adapters.begin(), end = adapters.end(); it != end; ++it)
             luids.append(it->luid);
@@ -182,10 +185,17 @@ void QDxgiVSyncService::refAdapter(LUID luid)
         return;
 
     if (!dxgiFactory) {
-        HRESULT hr = CreateDXGIFactory2(0, __uuidof(IDXGIFactory2), reinterpret_cast<void **>(&dxgiFactory));
+        static const auto pCreateDXGIFactory2 =
+            reinterpret_cast<decltype(&::CreateDXGIFactory2)>(
+                QApiCache::instance().get(QApiCache::SD_DXGI, "CreateDXGIFactory2"_L1));
+        if (!pCreateDXGIFactory2) {
+            disableService = true;
+            return;
+        }
+        HRESULT hr = pCreateDXGIFactory2(0, IID_PPV_ARGS(&dxgiFactory));
         if (FAILED(hr)) {
             disableService = true;
-            qWarning("QDxgiVSyncService: CreateDXGIFactory2 failed: %s", qPrintable(QSystemError::windowsComString(hr)));
+            qCWarning(lcQpaScreenUpdates, "QDxgiVSyncService: CreateDXGIFactory2 failed: %s", qPrintable(QSystemError::windowsComString(hr)));
             return;
         }
         if (!cleanupRegistered) {
@@ -218,7 +228,7 @@ void QDxgiVSyncService::refAdapter(LUID luid)
     }
 
     if (!a.adapter) {
-        qWarning("VSyncService: Failed to find adapter (via EnumAdapters1), skipping");
+        qCWarning(lcQpaScreenUpdates, "VSyncService: Failed to find adapter (via EnumAdapters1), skipping");
         return;
     }
 
@@ -353,7 +363,7 @@ void QDxgiVSyncService::updateWindowData(QWindow *window, WindowData *wd)
                 }
                 if (!w.isEmpty()) {
 #if 0
-                    qDebug() << "vsync thread" << QThread::currentThread() << monitor << "window list" << w << timestampNs;
+                    qCDebug(lcQpaScreenUpdates) << "vsync thread" << QThread::currentThread() << monitor << "window list" << w << timestampNs;
 #endif
                     for (const Callback &cb : std::as_const(callbacks)) {
                         if (cb)

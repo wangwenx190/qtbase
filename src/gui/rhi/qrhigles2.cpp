@@ -10,8 +10,14 @@
 #include <QtGui/private/qwindow_p.h>
 #include <qpa/qplatformopenglcontext.h>
 #include <qmath.h>
+#ifdef Q_OS_WINDOWS
+#  include <QtCore/private/qsystemlibrary_p.h>
+#  include <dwmapi.h>
+#endif
 
 QT_BEGIN_NAMESPACE
+
+using namespace Qt::StringLiterals;
 
 /*
   OpenGL backend. Binding vertex attribute locations and decomposing uniform
@@ -2352,6 +2358,23 @@ QRhi::FrameOpResult QRhiGles2::endFrame(QRhiSwapChain *swapChain, QRhi::EndFrame
     currentSwapChain = nullptr;
 
     ctx->handle()->endFrame();
+
+#ifdef Q_OS_WINDOWS
+    static const bool requestDwmFlush = qEnvironmentVariableIntValue("QT_RHI_DWM_FLUSH");
+    if (requestDwmFlush) {
+        static bool informOnce = false;
+        if (!informOnce) {
+            informOnce = true;
+            qCDebug(QRHI_LOG_INFO) << "DWM flush is requested every time after OpenGL swap chain swap buffer.";
+        }
+        static const auto pDwmFlush =
+            reinterpret_cast<decltype(&::DwmFlush)>(
+                QApiCache::instance().get(QApiCache::SD_DWMAPI, "DwmFlush"_L1));
+        if (pDwmFlush) {
+            pDwmFlush();
+        }
+    }
+#endif // Q_OS_WINDOWS
 
     return QRhi::FrameOpSuccess;
 }

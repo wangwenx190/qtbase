@@ -348,10 +348,6 @@ function(qt6_add_binary_resources target )
     set(rcc_options ${_RCC_OPTIONS})
     set(rcc_destination ${_RCC_DESTINATION})
 
-    if(NOT QT_FEATURE_zstd)
-        list(APPEND rcc_options "--no-zstd")
-    endif()
-
     if(NOT rcc_destination)
         set(rcc_destination ${CMAKE_CURRENT_BINARY_DIR}/${target}.rcc)
     endif()
@@ -414,10 +410,6 @@ function(qt6_add_resources outfiles )
 
         if("${rcc_options}" MATCHES "-binary")
             message(WARNING "Use qt6_add_binary_resources for binary option")
-        endif()
-
-        if(NOT QT_FEATURE_zstd)
-            list(APPEND rcc_options "--no-zstd")
         endif()
 
         foreach(it ${rcc_files})
@@ -496,10 +488,6 @@ function(qt6_add_big_resources outfiles )
         message(WARNING "Use qt6_add_binary_resources for binary option")
     endif()
 
-    if(NOT QT_FEATURE_zstd)
-        list(APPEND rcc_options "--no-zstd")
-    endif()
-
     foreach(it ${rcc_files})
         get_filename_component(outfilename ${it} NAME_WE)
 
@@ -558,6 +546,7 @@ function(_qt_internal_add_rcc_pass2)
 
     add_library(${arg_OBJECT_LIB} OBJECT ${arg_PASS1_OUTPUT_FILE})
     _qt_internal_set_up_static_runtime_library(${arg_OBJECT_LIB})
+    _qt_internal_disable_ltcg_for_non_suitable_target(${arg_OBJECT_LIB})
     target_compile_definitions(${arg_OBJECT_LIB} PUBLIC
         "$<TARGET_PROPERTY:Qt6::Core,INTERFACE_COMPILE_DEFINITIONS>")
     set_target_properties(${arg_OBJECT_LIB} PROPERTIES
@@ -652,15 +641,6 @@ endfunction()
 # target that doesn't support zstd decompression, even if the host tool supports it.
 # Allow an opt out via a QT_NO_AUTORCC_ZSTD variable.
 function(_qt_internal_disable_autorcc_zstd_when_not_supported target)
-    if(TARGET "${target}"
-            AND DEFINED QT_FEATURE_zstd
-            AND NOT QT_FEATURE_zstd
-            AND NOT QT_NO_AUTORCC_ZSTD)
-        get_target_property(target_type ${target} TYPE)
-        if(NOT target_type STREQUAL "INTERFACE_LIBRARY")
-            set_property(TARGET "${target}" APPEND PROPERTY AUTORCC_OPTIONS "--no-zstd")
-        endif()
-    endif()
 endfunction()
 
 function(_qt_internal_create_executable target)
@@ -693,6 +673,7 @@ function(_qt_internal_create_executable target)
 
     _qt_internal_disable_autorcc_zstd_when_not_supported("${target}")
     _qt_internal_set_up_static_runtime_library("${target}")
+    _qt_internal_disable_ltcg_for_non_suitable_target("${target}")
 endfunction()
 
 function(_qt_internal_finalize_executable target)
@@ -2031,6 +2012,7 @@ function(__qt_propagate_generated_resource target resource_name generated_source
             "$<TARGET_PROPERTY:${QT_CMAKE_EXPORT_NAMESPACE}::Core,INTERFACE_INCLUDE_DIRECTORIES>"
         )
         _qt_internal_set_up_static_runtime_library("${resource_target}")
+        _qt_internal_disable_ltcg_for_non_suitable_target("${resource_target}")
 
         # Special handling is required for the Core library resources. The linking of the Core
         # library to the resources adds a circular dependency. This leads to the wrong
@@ -2418,16 +2400,6 @@ function(_qt_internal_process_resource target resourceName)
         list(APPEND rccArgsAllPasses ${rcc_OPTIONS})
     endif()
 
-    # When cross-building, we use host tools to generate target code. If the host rcc was compiled
-    # with zstd support, it expects the target QtCore to be able to decompress zstd compressed
-    # content. This might be true with qmake where host tools are built as part of the
-    # cross-compiled Qt, but with CMake we build tools separate from the cross-compiled Qt.
-    # If the target does not support zstd (feature is disabled), tell rcc not to generate
-    # zstd related code.
-    if(NOT QT_FEATURE_zstd)
-        list(APPEND rccArgsAllPasses "--no-zstd")
-    endif()
-
     # Disable AUTOGEN on the generated .qrc file.
     set(scope_args "")
     if(CMAKE_VERSION VERSION_GREATER_EQUAL "3.18")
@@ -2796,6 +2768,7 @@ function(_qt_internal_add_library target)
 
     _qt_internal_disable_autorcc_zstd_when_not_supported("${target}")
     _qt_internal_set_up_static_runtime_library(${target})
+    _qt_internal_disable_ltcg_for_non_suitable_target(${target})
 
     if(NOT type_to_create STREQUAL "INTERFACE" AND NOT type_to_create STREQUAL "OBJECT")
         _qt_internal_apply_win_prefix_and_suffix("${target}")

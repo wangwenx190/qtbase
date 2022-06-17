@@ -402,6 +402,24 @@ function(_qt_internal_set_up_static_runtime_library target)
     endif()
 endfunction()
 
+function(_qt_internal_disable_ltcg_for_non_suitable_target target)
+    if(NOT QT_FEATURE_ltcg)
+        return()
+    endif()
+    get_target_property(target_type ${target} TYPE)
+    # We only allow executables and shared libraries to enable LTCG/LTO.
+    if(target_type STREQUAL "EXECUTABLE" OR target_type STREQUAL "SHARED_LIBRARY")
+        return()
+    endif()
+    # For all other target types (eg. static libraries) we disable LTCG to
+    # avoid compatibility issues between different compiler versions and
+    # most importantly, to avoid affecting user projects.
+    set_property(TARGET ${target} PROPERTY INTERPROCEDURAL_OPTIMIZATION OFF)
+    foreach(build_config DEBUG RELEASE MINSIZEREL RELWITHDEBINFO)
+        set_property(TARGET ${target} PROPERTY INTERPROCEDURAL_OPTIMIZATION_${build_config} OFF)
+    endforeach()
+endfunction()
+
 function(_qt_internal_warn_about_example_add_subdirectory)
     # This is set by qt_build_repo_impl_examples() in QtBuildRepoHelpers.cmake, only for developer
     # builds, to catch examples that are added via add_subdirectory instead of via

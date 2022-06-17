@@ -19,6 +19,8 @@
 
 QT_BEGIN_NAMESPACE
 
+using namespace Qt::StringLiterals;
+
 #ifndef TIME_KILL_SYNCHRONOUS
 #  define TIME_KILL_SYNCHRONOUS 0x0100
 #endif
@@ -369,8 +371,13 @@ void QEventDispatcherWin32Private::registerTimer(WinTimerInfo *t)
     }
 
     if (!ok) {
-        // user normal timers for (Very)CoarseTimers, or if no more multimedia timers available
-        ok = SetCoalescableTimer(internalHwnd, t->timerId, interval, nullptr, tolerance);
+        static const auto pSetCoalescableTimer =
+            reinterpret_cast<decltype(&::SetCoalescableTimer)>(
+                QApiCache::instance().get(QApiCache::SD_User32, "SetCoalescableTimer"_L1));
+        if (pSetCoalescableTimer) {
+            // user normal timers for (Very)CoarseTimers, or if no more multimedia timers available
+            ok = pSetCoalescableTimer(internalHwnd, t->timerId, interval, nullptr, tolerance);
+        }
     }
     if (!ok)
         ok = SetTimer(internalHwnd, t->timerId, interval, nullptr);

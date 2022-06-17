@@ -13,6 +13,12 @@ qt_internal_extend_sbom(WrapZLIB::WrapZLIB
     CPE_PRODUCT "zlib"
     DOWNLOAD_LOCATION "https://github.com/madler/zlib"
 )
+qt_find_package(WrapZSTD PROVIDED_TARGETS WrapZSTD::WrapZSTD)
+qt_internal_extend_sbom(WrapZSTD::WrapZSTD
+    CPE_VENDOR "zstd"
+    CPE_PRODUCT "zstd"
+    DOWNLOAD_LOCATION "https://github.com/facebook/zstd"
+)
 
 if(ANDROID)
     set(corelib_extra_cmake_files
@@ -356,6 +362,7 @@ qt_internal_add_module(Core
     LIBRARIES
         Qt::GlobalConfigPrivate
         WrapZLIB::WrapZLIB
+        WrapZSTD::WrapZSTD
     PRECOMPILED_HEADER
         "global/qt_pch.h"
     PUBLIC_LIBRARIES
@@ -558,9 +565,8 @@ qt_internal_extend_target(Core CONDITION QT_FEATURE_animation
 qt_internal_extend_target(Core CONDITION QT_FEATURE_thread AND WIN32
     SOURCES
         thread/qfutex_win_p.h
+        thread/qmutex_win.cpp
         thread/qwaitcondition_win.cpp
-    LIBRARIES
-        synchronization
 )
 
 qt_internal_extend_target(Core CONDITION CYGWIN
@@ -810,6 +816,11 @@ qt_internal_extend_target(Core CONDITION NOT QT_FEATURE_system_zlib
         Qt::ZlibPrivate
 )
 
+qt_internal_extend_target(Core CONDITION NOT QT_FEATURE_system_zstd
+    LIBRARIES
+        Qt::ZstdPrivate
+)
+
 qt_internal_extend_target(Core CONDITION QT_FEATURE_commandlineparser
     SOURCES
         tools/qcommandlineoption.cpp tools/qcommandlineoption.h
@@ -1018,11 +1029,6 @@ qt_internal_extend_target(Core
 qt_internal_extend_target(Core CONDITION QT_FEATURE_datetimeparser
     SOURCES
         time/qdatetimeparser.cpp time/qdatetimeparser_p.h
-)
-
-qt_internal_extend_target(Core CONDITION QT_FEATURE_zstd
-    LIBRARIES
-        WrapZSTD::WrapZSTD
 )
 
 qt_internal_extend_target(Core CONDITION QT_FEATURE_filesystemwatcher
@@ -1401,7 +1407,7 @@ if(QT_FEATURE_mimetype AND QT_FEATURE_mimetype_database)
         set(archiving_api "External")
     else()
         set(archiving_api "CMake")
-        if(QT_FEATURE_zstd AND NOT QT_CMAKE_ZSTD_SUPPORT)
+        if(NOT QT_CMAKE_ZSTD_SUPPORT)
             message(FATAL_ERROR
                 "CMake was not built with zstd support. "
                 "Rebuild CMake or set QT_AVOID_CMAKE_ARCHIVING_API=ON.")
@@ -1417,15 +1423,8 @@ if(QT_FEATURE_mimetype AND QT_FEATURE_mimetype_database)
             " ${INPUT_mimetype_database_compression}\nSupported compression types:\n"
             "    ${supported_compression_types}")
         endif()
-        if(compression_type STREQUAL "zstd" AND NOT QT_FEATURE_zstd)
-            message(FATAL_ERROR
-                "zstd compression is selected for mime type database, but the 'zstd'"
-                " feature is disabled.")
-        endif()
-    elseif(QT_FEATURE_zstd)
-        set(compression_type "zstd")
     else()
-        set(compression_type "gzip")
+        set(compression_type "zstd")
     endif()
 
     if(QT_INTERNAL_ENABLE_VERBOSE_MIME_DATABASE_COMPRESSION)
@@ -1482,6 +1481,7 @@ qt_internal_extend_target(Core CONDITION QT_FEATURE_ctf
 set_source_files_properties(
     thread/qmutex_mac.cpp
     thread/qmutex_unix.cpp
+    thread/qmutex_win.cpp
     PROPERTIES HEADER_FILE_ONLY ON)
 
 # Remove QT_NO_CAST_TO_ASCII to ensure that the symbols are included in the library.

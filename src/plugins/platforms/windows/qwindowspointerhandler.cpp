@@ -4,6 +4,7 @@
 #include <QtCore/qt_windows.h>
 
 #include "qwindowspointerhandler.h"
+#include "qwindowsmousehandler.h"
 #if QT_CONFIG(tabletevent)
 #  include "qwindowstabletsupport.h"
 #endif
@@ -21,6 +22,7 @@
 #include <QtCore/qvarlengtharray.h>
 #include <QtCore/qloggingcategory.h>
 #include <QtCore/qqueue.h>
+#include <QtCore/private/qsystemlibrary_p.h>
 
 #include <algorithm>
 
@@ -38,24 +40,22 @@ enum {
 
 qint64 QWindowsPointerHandler::m_nextInputDeviceId = 1;
 
-const QPointingDevice *primaryMouse()
-{
-    static QPointer<const QPointingDevice> result;
-    if (!result)
-        result = QPointingDevice::primaryPointingDevice();
-    return result;
-}
-
 QWindowsPointerHandler::~QWindowsPointerHandler()
 {
 }
 
 bool QWindowsPointerHandler::translatePointerEvent(QWindow *window, HWND hwnd, QtWindows::WindowsEventType et, MSG msg, LRESULT *result)
 {
+    if (!QWindowsApi::supportsPointerApi())
+        return false;
+
     *result = 0;
     const quint32 pointerId = GET_POINTERID_WPARAM(msg.wParam);
 
-    if (!GetPointerType(pointerId, &m_pointerType)) {
+    static const auto pGetPointerType =
+        reinterpret_cast<decltype(&::GetPointerType)>(
+            QApiCache::instance().get(QApiCache::SD_User32, "GetPointerType"_L1));
+    if (!pGetPointerType(pointerId, &m_pointerType)) {
         qWarning() << "GetPointerType() failed:" << qt_error_string();
         return false;
     }
@@ -69,12 +69,15 @@ bool QWindowsPointerHandler::translatePointerEvent(QWindow *window, HWND hwnd, Q
     }
     case QT_PT_TOUCH: {
         quint32 pointerCount = 0;
-        if (!GetPointerFrameTouchInfo(pointerId, &pointerCount, nullptr)) {
+        static const auto pGetPointerFrameTouchInfo =
+            reinterpret_cast<decltype(&::GetPointerFrameTouchInfo)>(
+                QApiCache::instance().get(QApiCache::SD_User32, "GetPointerFrameTouchInfo"_L1));
+        if (!pGetPointerFrameTouchInfo(pointerId, &pointerCount, nullptr)) {
             qWarning() << "GetPointerFrameTouchInfo() failed:" << qt_error_string();
             return false;
         }
         QVarLengthArray<POINTER_TOUCH_INFO, 10> touchInfo(pointerCount);
-        if (!GetPointerFrameTouchInfo(pointerId, &pointerCount, touchInfo.data())) {
+        if (!pGetPointerFrameTouchInfo(pointerId, &pointerCount, touchInfo.data())) {
             qWarning() << "GetPointerFrameTouchInfo() failed:" << qt_error_string();
             return false;
         }
@@ -87,7 +90,10 @@ bool QWindowsPointerHandler::translatePointerEvent(QWindow *window, HWND hwnd, Q
         // dispatch any skipped frames if event compression is disabled by the app
         if (historyCount > 1 && !QCoreApplication::testAttribute(Qt::AA_CompressHighFrequencyEvents)) {
             touchInfo.resize(pointerCount * historyCount);
-            if (!GetPointerFrameTouchInfoHistory(pointerId,
+            static const auto pGetPointerFrameTouchInfoHistory =
+                reinterpret_cast<decltype(&::GetPointerFrameTouchInfoHistory)>(
+                    QApiCache::instance().get(QApiCache::SD_User32, "GetPointerFrameTouchInfoHistory"_L1));
+            if (!pGetPointerFrameTouchInfoHistory(pointerId,
                                                  &historyCount,
                                                  &pointerCount,
                                                  touchInfo.data())) {
@@ -108,7 +114,10 @@ bool QWindowsPointerHandler::translatePointerEvent(QWindow *window, HWND hwnd, Q
     }
     case QT_PT_PEN: {
         POINTER_PEN_INFO penInfo;
-        if (!GetPointerPenInfo(pointerId, &penInfo)) {
+        static const auto pGetPointerPenInfo =
+            reinterpret_cast<decltype(&::GetPointerPenInfo)>(
+                QApiCache::instance().get(QApiCache::SD_User32, "GetPointerPenInfo"_L1));
+        if (!pGetPointerPenInfo(pointerId, &penInfo)) {
             qWarning() << "GetPointerPenInfo() failed:" << qt_error_string();
             return false;
         }
@@ -120,7 +129,10 @@ bool QWindowsPointerHandler::translatePointerEvent(QWindow *window, HWND hwnd, Q
                 || !QCoreApplication::testAttribute(Qt::AA_CompressTabletEvents))) {
             QVarLengthArray<POINTER_PEN_INFO, 10> penInfoHistory(historyCount);
 
-            if (!GetPointerPenInfoHistory(pointerId, &historyCount, penInfoHistory.data())) {
+            static const auto pGetPointerPenInfoHistory =
+                reinterpret_cast<decltype(&::GetPointerPenInfoHistory)>(
+                    QApiCache::instance().get(QApiCache::SD_User32, "GetPointerPenInfoHistory"_L1));
+            if (!pGetPointerPenInfoHistory(pointerId, &historyCount, penInfoHistory.data())) {
                 qWarning() << "GetPointerPenInfoHistory() failed:" << qt_error_string();
                 return false;
             }
@@ -137,106 +149,6 @@ bool QWindowsPointerHandler::translatePointerEvent(QWindow *window, HWND hwnd, Q
     }
     }
     return false;
-}
-
-namespace {
-struct MouseEvent {
-    QEvent::Type type;
-    Qt::MouseButton button;
-};
-} // namespace
-
-static inline Qt::MouseButton extraButton(WPARAM wParam) // for WM_XBUTTON...
-{
-    return GET_XBUTTON_WPARAM(wParam) == XBUTTON1 ? Qt::BackButton : Qt::ForwardButton;
-}
-
-static inline MouseEvent eventFromMsg(const MSG &msg)
-{
-    switch (msg.message) {
-    case WM_MOUSEMOVE:
-        return {QEvent::MouseMove, Qt::NoButton};
-    case WM_LBUTTONDOWN:
-        return {QEvent::MouseButtonPress, Qt::LeftButton};
-    case WM_LBUTTONUP:
-        return {QEvent::MouseButtonRelease, Qt::LeftButton};
-    case WM_LBUTTONDBLCLK: // Qt QPA does not handle double clicks, send as press
-        return {QEvent::MouseButtonPress, Qt::LeftButton};
-    case WM_MBUTTONDOWN:
-        return {QEvent::MouseButtonPress, Qt::MiddleButton};
-    case WM_MBUTTONUP:
-        return {QEvent::MouseButtonRelease, Qt::MiddleButton};
-    case WM_MBUTTONDBLCLK:
-        return {QEvent::MouseButtonPress, Qt::MiddleButton};
-    case WM_RBUTTONDOWN:
-        return {QEvent::MouseButtonPress, Qt::RightButton};
-    case WM_RBUTTONUP:
-        return {QEvent::MouseButtonRelease, Qt::RightButton};
-    case WM_RBUTTONDBLCLK:
-        return {QEvent::MouseButtonPress, Qt::RightButton};
-    case WM_XBUTTONDOWN:
-        return {QEvent::MouseButtonPress, extraButton(msg.wParam)};
-    case WM_XBUTTONUP:
-        return {QEvent::MouseButtonRelease, extraButton(msg.wParam)};
-    case WM_XBUTTONDBLCLK:
-        return {QEvent::MouseButtonPress, extraButton(msg.wParam)};
-    case WM_NCMOUSEMOVE:
-        return {QEvent::NonClientAreaMouseMove, Qt::NoButton};
-    case WM_NCLBUTTONDOWN:
-        return {QEvent::NonClientAreaMouseButtonPress, Qt::LeftButton};
-    case WM_NCLBUTTONUP:
-        return {QEvent::NonClientAreaMouseButtonRelease, Qt::LeftButton};
-    case WM_NCLBUTTONDBLCLK:
-        return {QEvent::NonClientAreaMouseButtonPress, Qt::LeftButton};
-    case WM_NCMBUTTONDOWN:
-        return {QEvent::NonClientAreaMouseButtonPress, Qt::MiddleButton};
-    case WM_NCMBUTTONUP:
-        return {QEvent::NonClientAreaMouseButtonRelease, Qt::MiddleButton};
-    case WM_NCMBUTTONDBLCLK:
-        return {QEvent::NonClientAreaMouseButtonPress, Qt::MiddleButton};
-    case WM_NCRBUTTONDOWN:
-        return {QEvent::NonClientAreaMouseButtonPress, Qt::RightButton};
-    case WM_NCRBUTTONUP:
-        return {QEvent::NonClientAreaMouseButtonRelease, Qt::RightButton};
-    case WM_NCRBUTTONDBLCLK:
-        return {QEvent::NonClientAreaMouseButtonPress, Qt::RightButton};
-    default: // WM_MOUSELEAVE
-        break;
-    }
-    return {QEvent::None, Qt::NoButton};
-}
-
-static Qt::MouseButtons mouseButtonsFromKeyState(WPARAM keyState)
-{
-    Qt::MouseButtons result = Qt::NoButton;
-    if (keyState & MK_LBUTTON)
-        result |= Qt::LeftButton;
-    if (keyState & MK_RBUTTON)
-        result |= Qt::RightButton;
-    if (keyState & MK_MBUTTON)
-        result |= Qt::MiddleButton;
-    if (keyState & MK_XBUTTON1)
-        result |= Qt::XButton1;
-    if (keyState & MK_XBUTTON2)
-        result |= Qt::XButton2;
-    return result;
-}
-
-Qt::MouseButtons QWindowsPointerHandler::queryMouseButtons()
-{
-    Qt::MouseButtons result = Qt::NoButton;
-    const bool mouseSwapped = GetSystemMetrics(SM_SWAPBUTTON);
-    if (GetAsyncKeyState(VK_LBUTTON) < 0)
-        result |= mouseSwapped ? Qt::RightButton: Qt::LeftButton;
-    if (GetAsyncKeyState(VK_RBUTTON) < 0)
-        result |= mouseSwapped ? Qt::LeftButton : Qt::RightButton;
-    if (GetAsyncKeyState(VK_MBUTTON) < 0)
-        result |= Qt::MiddleButton;
-    if (GetAsyncKeyState(VK_XBUTTON1) < 0)
-        result |= Qt::XButton1;
-    if (GetAsyncKeyState(VK_XBUTTON2) < 0)
-        result |= Qt::XButton2;
-    return result;
 }
 
 static QWindow *getWindowUnderPointer(QWindow *window, QPoint globalPos)
@@ -426,6 +338,9 @@ bool QWindowsPointerHandler::translateTouchEvent(QWindow *window, HWND hwnd,
 {
     Q_UNUSED(hwnd);
 
+    if (!QWindowsApi::supportsPointerApi())
+        return false;
+
     auto *touchInfo = static_cast<POINTER_TOUCH_INFO *>(vTouchInfo);
 
     if (et & QtWindows::NonClientEventFlag)
@@ -527,7 +442,10 @@ bool QWindowsPointerHandler::translateTouchEvent(QWindow *window, HWND hwnd,
         inputIds.insert(touchPoint.id);
 
         // Avoid getting repeated messages for this frame if there are multiple pointerIds
-        SkipPointerFrameMessages(touchInfo[i].pointerInfo.pointerId);
+        static const auto pSkipPointerFrameMessages =
+            reinterpret_cast<decltype(&::SkipPointerFrameMessages)>(
+                QApiCache::instance().get(QApiCache::SD_User32, "SkipPointerFrameMessages"_L1));
+        pSkipPointerFrameMessages(touchInfo[i].pointerInfo.pointerId);
     }
 
     // Some devices send touches for each finger in a different message/frame, instead of consolidating
@@ -568,13 +486,19 @@ bool QWindowsPointerHandler::translatePenEvent(QWindow *window, HWND hwnd, QtWin
                                                MSG msg, PVOID vPenInfo)
 {
 #if QT_CONFIG(tabletevent)
+    if (!QWindowsApi::supportsPointerApi())
+        return false;
+
     if (et & QtWindows::NonClientEventFlag)
         return false; // Let DefWindowProc() handle Non Client messages.
 
     auto *penInfo = static_cast<POINTER_PEN_INFO *>(vPenInfo);
 
     RECT pRect, dRect;
-    if (!GetPointerDeviceRects(penInfo->pointerInfo.sourceDevice, &pRect, &dRect))
+    static const auto pGetPointerDeviceRects =
+        reinterpret_cast<decltype(&::GetPointerDeviceRects)>(
+            QApiCache::instance().get(QApiCache::SD_User32, "GetPointerDeviceRects"_L1));
+    if (!pGetPointerDeviceRects(penInfo->pointerInfo.sourceDevice, &pRect, &dRect))
         return false;
 
     const auto systemId = (qint64)penInfo->pointerInfo.sourceDevice;
@@ -605,7 +529,7 @@ bool QWindowsPointerHandler::translatePenEvent(QWindow *window, HWND hwnd, QtWin
     QPointingDevice::PointerType type;
     // Since it may be the middle button, so if the checks fail then it should
     // be set to Middle if it was used.
-    Qt::MouseButtons mouseButtons = queryMouseButtons();
+    Qt::MouseButtons mouseButtons = QWindowsMouseHandler::queryMouseButtons();
 
     const bool pointerInContact = IS_POINTER_INCONTACT_WPARAM(msg.wParam);
     if (pointerInContact)
@@ -792,7 +716,7 @@ bool QWindowsPointerHandler::translateMouseEvent(QWindow *window,
     }
 
     Qt::MouseEventSource source = Qt::MouseEventNotSynthesized;
-    const QPointingDevice *device = primaryMouse();
+    const QPointingDevice *device = QWindowsMouseHandler::primaryMouse();
 
     // Following the logic of the old mouse handler, only events synthesized
     // for touch screen are marked as such. On some systems, using the bit 7 of
@@ -816,13 +740,13 @@ bool QWindowsPointerHandler::translateMouseEvent(QWindow *window,
         }
     }
 
-    const MouseEvent mouseEvent = eventFromMsg(msg);
+    const MouseEvent mouseEvent = QWindowsMouseHandler::eventFromMsg(msg);
     Qt::MouseButtons mouseButtons;
 
     if (mouseEvent.type >= QEvent::NonClientAreaMouseMove && mouseEvent.type <= QEvent::NonClientAreaMouseButtonDblClick)
-        mouseButtons = queryMouseButtons();
+        mouseButtons = QWindowsMouseHandler::queryMouseButtons();
     else
-        mouseButtons = mouseButtonsFromKeyState(msg.wParam);
+        mouseButtons = QWindowsMouseHandler::keyStateToMouseButtons(msg.wParam);
 
     // When the left/right mouse buttons are pressed over the window title bar
     // WM_NCLBUTTONDOWN/WM_NCRBUTTONDOWN messages are received. But no UP

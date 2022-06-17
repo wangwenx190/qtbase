@@ -17,6 +17,8 @@
 
 QT_BEGIN_NAMESPACE
 
+using namespace Qt::StringLiterals;
+
 Q_DECLARE_LOGGING_CATEGORY(lcQpaWindow)
 Q_DECLARE_LOGGING_CATEGORY(lcQpaEvents)
 Q_DECLARE_LOGGING_CATEGORY(lcQpaGl)
@@ -45,6 +47,17 @@ struct QWindowsContextPrivate;
 class QPoint;
 class QKeyEvent;
 class QPointingDevice;
+
+struct QWindowsApi final
+{
+    [[nodiscard]] static bool supportsPointerApi();
+
+private:
+    Q_DISABLE_COPY_MOVE(QWindowsApi)
+    QWindowsApi();
+    ~QWindowsApi();
+};
+
 class QWindowsContext
 {
     Q_DISABLE_COPY_MOVE(QWindowsContext)
@@ -54,7 +67,8 @@ public:
     enum SystemInfoFlags
     {
         SI_RTL_Extensions = 0x1,
-        SI_SupportsTouch = 0x2
+        SI_SupportsTouch = 0x2,
+        SI_SupportsPointer = 0x4,
     };
 
     // Verbose flag set by the `verbose` platform plugin argument
@@ -67,6 +81,7 @@ public:
     bool initTouch(unsigned integrationOptions); // For calls from QWindowsIntegration::QWindowsIntegration() only.
     void registerTouchWindows();
     bool initTablet();
+    bool initPointer(unsigned integrationOptions);
     bool disposeTablet();
 
     bool initPowerNotificationHandler();
@@ -155,6 +170,18 @@ public:
 
     static bool filterNativeEvent(MSG *msg, LRESULT *result);
     static bool filterNativeEvent(QWindow *window, MSG *msg, LRESULT *result);
+
+    [[nodiscard]] static UINT getDpiForWindow(const HWND hWnd);
+    [[nodiscard]] static UINT getDpiForMonitor(const HMONITOR hMonitor);
+    [[nodiscard]] static UINT getDpiForPrimaryMonitor();
+    [[nodiscard]] static UINT getMostPossibleDpiForWindow(const HWND hWnd);
+    [[nodiscard]] static UINT getMostPossibleDpiForMonitor(const HMONITOR hMonitor);
+    [[nodiscard]] static int getResizeBorderThicknessForDpi(const UINT dpi);
+    [[nodiscard]] static int getResizeBorderThickness(const HWND hWnd);
+    [[nodiscard]] static int getResizeBorderThickness(const HMONITOR hMonitor);
+    [[nodiscard]] static int getTitleBarHeightForDpi(const UINT dpi);
+    [[nodiscard]] static int getTitleBarHeight(const HWND hWnd);
+    [[nodiscard]] static int getTitleBarHeight(const HMONITOR hMonitor);
 
 private:
     void handleFocusEvent(QtWindows::WindowsEventType et, QWindowsWindow *w);

@@ -194,7 +194,7 @@ ret
 // Approximately 111 instruction slots used
 #endif
 
-inline constexpr BYTE g_csMipmap[] =
+inline constexpr const BYTE g_csMipmap[] =
 {
      68,  88,  66,  67, 133, 122, 
       5, 181, 163, 163, 140, 185, 

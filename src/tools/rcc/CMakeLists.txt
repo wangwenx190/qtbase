@@ -5,6 +5,9 @@
 ## rcc Tool:
 #####################################################################
 
+qt_find_package(WrapZLIB PROVIDED_TARGETS WrapZLIB::WrapZLIB)
+qt_find_package(WrapZSTD PROVIDED_TARGETS WrapZSTD::WrapZSTD)
+
 qt_get_tool_target_name(target_name rcc)
 qt_internal_add_tool(${target_name}
     TRY_RUN
@@ -14,6 +17,9 @@ qt_internal_add_tool(${target_name}
     SOURCES
         main.cpp
         rcc.cpp rcc.h
+    LIBRARIES
+        WrapZLIB::WrapZLIB
+        WrapZSTD::WrapZSTD
     DEFINES
         QT_NO_CAST_FROM_ASCII
         QT_NO_FOREACH
@@ -27,7 +33,12 @@ qt_internal_return_unless_building_tools()
 ## Scopes:
 #####################################################################
 
-qt_internal_extend_target(${target_name} CONDITION QT_FEATURE_zstd
+qt_internal_extend_target(${target_name} CONDITION NOT QT_FEATURE_system_zlib
     LIBRARIES
-        WrapZSTD::WrapZSTD
+        ZlibPrivate
+)
+
+qt_internal_extend_target(${target_name} CONDITION NOT QT_FEATURE_system_zstd
+    LIBRARIES
+        ZstdPrivate
 )

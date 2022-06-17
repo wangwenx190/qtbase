@@ -275,6 +275,7 @@ Core options:
   -jemalloc ............ Enable jemalloc support and cooperation [no]
   -pcre ................ Select used libpcre2 [system/qt/no]
   -zlib ................ Select used zlib [system/qt]
+  -zstd ................ Select used zstd [system/qt]
 
   Logging backends:
     -journald .......... Enable journald support [no] (Unix only)

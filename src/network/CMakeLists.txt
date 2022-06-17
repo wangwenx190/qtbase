@@ -5,6 +5,9 @@
 ## Network Module:
 #####################################################################
 
+qt_find_package(WrapZLIB PROVIDED_TARGETS WrapZLIB::WrapZLIB)
+qt_find_package(WrapZSTD PROVIDED_TARGETS WrapZSTD::WrapZSTD)
+
 qt_internal_add_module(Network
     PLUGIN_TYPES networkaccess networkinformation tls
     SOURCES
@@ -68,6 +71,8 @@ qt_internal_add_module(Network
         kernel
     LIBRARIES
         Qt::CorePrivate
+        WrapZLIB::WrapZLIB
+        WrapZSTD::WrapZSTD
     PUBLIC_LIBRARIES
         Qt::Core
     PRIVATE_MODULE_INTERFACE
@@ -153,26 +158,18 @@ qt_internal_extend_target(Network CONDITION QT_FEATURE_brotli AND QT_FEATURE_htt
         WrapBrotli::WrapBrotliDec
 )
 
-qt_internal_extend_target(Network CONDITION QT_FEATURE_http AND QT_FEATURE_zstd
-    LIBRARIES
-        WrapZSTD::WrapZSTD
-)
-
-qt_internal_extend_target(Network CONDITION QT_FEATURE_system_zlib
-    LIBRARIES
-        WrapZLIB::WrapZLIB
-)
-
 qt_internal_extend_target(Network CONDITION NOT QT_FEATURE_system_zlib
-    INCLUDE_DIRECTORIES
-        ../3rdparty/zlib/src
     ATTRIBUTION_FILE_DIR_PATHS
         ../3rdparty/zlib
+    LIBRARIES
+        Qt::ZlibPrivate
 )
 
-qt_internal_extend_target(Network CONDITION NOT QT_FEATURE_system_zlib AND NOT no_core_dep
+qt_internal_extend_target(Network CONDITION NOT QT_FEATURE_system_zstd
+    ATTRIBUTION_FILE_DIR_PATHS
+        ../3rdparty/zstd
     LIBRARIES
-        Qt::Core
+        Qt::ZstdPrivate
 )
 
 qt_internal_extend_target(Network CONDITION QT_FEATURE_topleveldomain

@@ -7,37 +7,36 @@
 
 QT_BEGIN_NAMESPACE
 
+using namespace Qt::StringLiterals;
+
 namespace QRhiD3D {
 
 pD3DCompile resolveD3DCompile()
 {
-    for (const wchar_t *libraryName : {L"D3DCompiler_47", L"D3DCompiler_43"}) {
-        QSystemLibrary library(libraryName);
-        if (library.load()) {
-            if (auto symbol = library.resolve("D3DCompile"))
-                return reinterpret_cast<pD3DCompile>(symbol);
-        } else {
-            qWarning("Failed to load D3DCompiler_47/43.dll");
+    static const auto d3dCompile = []() -> pD3DCompile {
+        for (const wchar_t *libraryName : {L"D3DCompiler_47", L"D3DCompiler_43"}) {
+            QSystemLibrary library(libraryName);
+            if (library.load()) {
+                if (const auto symbol = library.resolve("D3DCompile"))
+                    return reinterpret_cast<pD3DCompile>(symbol);
+            }
         }
-    }
-    return nullptr;
+        qWarning("Failed to resolve D3DCompile() from D3DCompiler_47/43.dll");
+        return nullptr;
+    }();
+    return d3dCompile;
 }
 
 IDCompositionDevice *createDirectCompositionDevice()
 {
-    QSystemLibrary dcomplib(QStringLiteral("dcomp"));
-    typedef HRESULT (__stdcall *DCompositionCreateDeviceFuncPtr)(
-        _In_opt_ IDXGIDevice *dxgiDevice,
-        _In_ REFIID iid,
-        _Outptr_ void **dcompositionDevice);
-    DCompositionCreateDeviceFuncPtr func = reinterpret_cast<DCompositionCreateDeviceFuncPtr>(
-        dcomplib.resolve("DCompositionCreateDevice"));
-    if (!func) {
-        qWarning("Unable to resolve DCompositionCreateDevice, perhaps dcomp.dll is missing?");
+    static const auto pDCompositionCreateDevice =
+        reinterpret_cast<decltype(&::DCompositionCreateDevice)>(
+            QApiCache::instance().get(QApiCache::SD_DComp, "DCompositionCreateDevice"_L1));
+    if (!pDCompositionCreateDevice) {
         return nullptr;
     }
     IDCompositionDevice *device = nullptr;
-    HRESULT hr = func(nullptr, __uuidof(IDCompositionDevice), reinterpret_cast<void **>(&device));
+    const HRESULT hr = pDCompositionCreateDevice(nullptr, IID_PPV_ARGS(&device));
     if (FAILED(hr)) {
         qWarning("Failed to create Direct Composition device: %s",
                  qPrintable(QSystemError::windowsComString(hr)));
@@ -61,14 +60,14 @@ std::pair<IDxcCompiler *, IDxcLibrary *> createDxcCompiler()
         return {};
     }
     IDxcCompiler *compiler = nullptr;
-    HRESULT hr = func(CLSID_DxcCompiler, __uuidof(IDxcCompiler), reinterpret_cast<void**>(&compiler));
+    HRESULT hr = func(CLSID_DxcCompiler, IID_PPV_ARGS(&compiler));
     if (FAILED(hr)) {
         qWarning("Failed to create dxc compiler instance: %s",
                  qPrintable(QSystemError::windowsComString(hr)));
         return {};
     }
     IDxcLibrary *library = nullptr;
-    hr = func(CLSID_DxcLibrary, __uuidof(IDxcLibrary), reinterpret_cast<void**>(&library));
+    hr = func(CLSID_DxcLibrary, IID_PPV_ARGS(&library));
     if (FAILED(hr)) {
         qWarning("Failed to create dxc library instance: %s",
                  qPrintable(QSystemError::windowsComString(hr)));

@@ -400,8 +400,7 @@ void QWindowsFontEngineDirectWrite::collectMetrics()
 
 #if QT_CONFIG(directwrite3)
     IDWriteFontFace5 *face5;
-    if (SUCCEEDED(m_directWriteFontFace->QueryInterface(__uuidof(IDWriteFontFace5),
-                                       reinterpret_cast<void **>(&face5)))) {
+    if (SUCCEEDED(m_directWriteFontFace->QueryInterface(IID_PPV_ARGS(&face5)))) {
 
         IDWriteFontResource *fontResource;
         if (SUCCEEDED(face5->GetFontResource(&fontResource))) {
@@ -790,8 +789,7 @@ bool QWindowsFontEngineDirectWrite::supportsHorizontalSubPixelPositions() const
 QFontEngine::Properties QWindowsFontEngineDirectWrite::properties() const
 {
     IDWriteFontFace2 *directWriteFontFace2;
-    if (SUCCEEDED(m_directWriteFontFace->QueryInterface(__uuidof(IDWriteFontFace2),
-                                                        reinterpret_cast<void **>(&directWriteFontFace2)))) {
+    if (SUCCEEDED(m_directWriteFontFace->QueryInterface(IID_PPV_ARGS(&directWriteFontFace2)))) {
         DWRITE_FONT_METRICS1 metrics;
         directWriteFontFace2->GetMetrics(&metrics);
 
@@ -824,8 +822,7 @@ bool QWindowsFontEngineDirectWrite::renderColr0GlyphRun(QImage *image,
                                                         QRect boundingRect) const
 {
     ComPtr<IDWriteFactory2> factory2;
-    HRESULT hr = m_fontEngineData->directWriteFactory->QueryInterface(__uuidof(IDWriteFactory2),
-                                                                      &factory2);
+    HRESULT hr = m_fontEngineData->directWriteFactory->QueryInterface(IID_PPV_ARGS(&factory2));
     if (FAILED(hr))
         return false;
 
@@ -975,8 +972,7 @@ QRect QWindowsFontEngineDirectWrite::paintGraphBounds(glyph_t glyph,
 {
 #if QT_CONFIG(directwritecolrv1)
     ComPtr<IDWriteFontFace7> face7;
-    HRESULT hr = m_directWriteFontFace->QueryInterface(__uuidof(IDWriteFontFace7),
-                                                       &face7);
+    HRESULT hr = m_directWriteFontFace->QueryInterface(IID_PPV_ARGS(&face7));
     if (SUCCEEDED(hr)) {
         DWRITE_PAINT_FEATURE_LEVEL featureLevel = face7->GetPaintFeatureLevel(DWRITE_GLYPH_IMAGE_FORMATS_COLR_PAINT_TREE);
         if (featureLevel != DWRITE_PAINT_FEATURE_LEVEL_COLR_V1)
@@ -1294,8 +1290,7 @@ bool QWindowsFontEngineDirectWrite::renderColr1GlyphRun(QImage *image,
     qCDebug(lcColrv1) << "renderColr1GlyphRun,"
                       << "families:" << fontDef.families;
     ComPtr<IDWriteFontFace7> face7;
-    HRESULT hr = m_directWriteFontFace->QueryInterface(__uuidof(IDWriteFontFace7),
-                                                       &face7);
+    HRESULT hr = m_directWriteFontFace->QueryInterface(IID_PPV_ARGS(&face7));
     if (SUCCEEDED(hr)) {
         DWRITE_PAINT_FEATURE_LEVEL featureLevel =
             face7->GetPaintFeatureLevel(DWRITE_GLYPH_IMAGE_FORMATS_COLR_PAINT_TREE);
@@ -1396,8 +1391,7 @@ QImage QWindowsFontEngineDirectWrite::renderColorGlyph(DWRITE_GLYPH_RUN *glyphRu
     // glyphs, or a combination.
     if (ret.isNull()) {
         ComPtr<IDWriteFactory4> factory4;
-        HRESULT hr = m_fontEngineData->directWriteFactory->QueryInterface(__uuidof(IDWriteFactory4),
-                                                                          &factory4);
+        HRESULT hr = m_fontEngineData->directWriteFactory->QueryInterface(IID_PPV_ARGS(&factory4));
         if (SUCCEEDED(hr)) {
             const DWRITE_GLYPH_IMAGE_FORMATS supportedBitmapFormats =
                 DWRITE_GLYPH_IMAGE_FORMATS(DWRITE_GLYPH_IMAGE_FORMATS_PNG
@@ -1454,8 +1448,7 @@ QImage QWindowsFontEngineDirectWrite::renderColorGlyph(DWRITE_GLYPH_RUN *glyphRu
                     }
                 } else if (colorGlyphRun->glyphImageFormat & supportedBitmapFormats) {
                     ComPtr<IDWriteFontFace4> face4;
-                    if (SUCCEEDED(m_directWriteFontFace->QueryInterface(__uuidof(IDWriteFontFace4),
-                                                                        &face4))) {
+                    if (SUCCEEDED(m_directWriteFontFace->QueryInterface(IID_PPV_ARGS(&face4)))) {
                         DWRITE_GLYPH_IMAGE_DATA data;
                         void *ctx;
                         Q_ASSERT(glyphRun->glyphCount == 1);
@@ -1511,8 +1504,7 @@ QImage QWindowsFontEngineDirectWrite::renderColorGlyph(DWRITE_GLYPH_RUN *glyphRu
     // If all else fails, we go through the pre-dwrite3 version, which just supports COLRv0.
     if (ret.isNull()) {
         ComPtr<IDWriteFactory2> factory2;
-        HRESULT hr = m_fontEngineData->directWriteFactory->QueryInterface(__uuidof(IDWriteFactory2),
-                                                                          &factory2);
+        HRESULT hr = m_fontEngineData->directWriteFactory->QueryInterface(IID_PPV_ARGS(&factory2));
         if (FAILED(hr))
             return ret;
 
@@ -1607,8 +1599,7 @@ QImage QWindowsFontEngineDirectWrite::imageForGlyph(glyph_t t,
             : DWRITE_GRID_FIT_MODE_DEFAULT;
 
     ComPtr<IDWriteFactory2> factory2;
-    HRESULT hr = m_fontEngineData->directWriteFactory->QueryInterface(__uuidof(IDWriteFactory2),
-                                                                      &factory2);
+    HRESULT hr = m_fontEngineData->directWriteFactory->QueryInterface(IID_PPV_ARGS(&factory2));
     ComPtr<IDWriteGlyphRunAnalysis> glyphAnalysis;
     if (!SUCCEEDED(hr)) {
         qErrnoWarning(hr, "%s: Failed to query IDWriteFactory2 interface.", __FUNCTION__);
@@ -1845,8 +1836,7 @@ void QWindowsFontEngineDirectWrite::initFontInfo(const QFontDef &request,
 
 #if QT_CONFIG(directwrite3)
     IDWriteFontFace3 *face3 = nullptr;
-    if (SUCCEEDED(m_directWriteFontFace->QueryInterface(__uuidof(IDWriteFontFace3),
-                                                        reinterpret_cast<void **>(&face3)))) {
+    if (SUCCEEDED(m_directWriteFontFace->QueryInterface(IID_PPV_ARGS(&face3)))) {
         IDWriteLocalizedStrings *names;
         if (SUCCEEDED(face3->GetFaceNames(&names))) {
             wchar_t englishLocale[] = L"en-us";
@@ -1899,8 +1889,7 @@ QRect QWindowsFontEngineDirectWrite::alphaTextureBounds(glyph_t glyph,
                                            : DWRITE_GRID_FIT_MODE_DEFAULT;
 
     ComPtr<IDWriteFactory2> factory2 = nullptr;
-    HRESULT hr = m_fontEngineData->directWriteFactory->QueryInterface(__uuidof(IDWriteFactory2),
-                                                                      &factory2);
+    HRESULT hr = m_fontEngineData->directWriteFactory->QueryInterface(IID_PPV_ARGS(&factory2));
 
     ComPtr<IDWriteGlyphRunAnalysis> glyphAnalysis;
     if (SUCCEEDED(hr)) {
@@ -1945,8 +1934,7 @@ QRect QWindowsFontEngineDirectWrite::colorBitmapBounds(glyph_t glyph, const DWRI
 {
 #if QT_CONFIG(directwrite3)
     ComPtr<IDWriteFontFace4> face4;
-    if (SUCCEEDED(m_directWriteFontFace->QueryInterface(__uuidof(IDWriteFontFace4),
-                                                        &face4))) {
+    if (SUCCEEDED(m_directWriteFontFace->QueryInterface(IID_PPV_ARGS(&face4)))) {
         DWRITE_GLYPH_IMAGE_FORMATS formats = face4->GetGlyphImageFormats();
 
         const DWRITE_GLYPH_IMAGE_FORMATS supportedBitmapFormats =

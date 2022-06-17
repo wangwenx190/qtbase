@@ -19,6 +19,7 @@
 #ifdef Q_OS_WIN
 #  include <QtCore/qstring.h>
 #  include <qt_windows.h>
+#  include <memory>
 
 QT_BEGIN_NAMESPACE
 
@@ -67,6 +68,42 @@ private:
     HINSTANCE m_handle = nullptr;
     QString m_libraryName = {};
     bool m_didLoad = false;
+};
+
+struct QApiCache final
+{
+    enum SystemDLL : qsizetype {
+        SD_Kernel32 = 0, // We are using it as an array index so must begin with 0.
+        SD_User32,
+        SD_Shell32,
+        SD_GDI32,
+        SD_SHCore,
+        SD_DWMAPI,
+        SD_DWrite,
+        SD_DXGI,
+        SD_DComp,
+        SD_D3D9,
+        SD_D3D11,
+        SD_D3D12,
+        SD_PSAPI,
+        SD_NTDLL,
+        SD_DNSAPI,
+        SD_KernelBase,
+        SD_ComBase,
+        SD_OpenGL32,
+        SD_MAX
+    };
+
+    [[nodiscard]] Q_CORE_EXPORT static const QApiCache &instance();
+    [[nodiscard]] Q_CORE_EXPORT QFunctionPointer get(const qsizetype dll, const QString &funcName) const;
+
+private:
+    QApiCache();
+    ~QApiCache();
+    Q_DISABLE_COPY_MOVE(QApiCache)
+    struct D;
+    friend struct D;
+    const std::unique_ptr<D> d;
 };
 
 QT_END_NAMESPACE

@@ -627,7 +627,6 @@ function(qt_internal_add_module target)
             QT_DEPRECATED_WARNINGS
             QT_BUILDING_QT
             QT_BUILD_${module_define_infix}_LIB ### FIXME: use QT_BUILD_ADDON for Add-ons or remove if we don't have add-ons anymore
-            ${deprecation_define}
             )
         list(APPEND arg_LIBRARIES Qt::PlatformModuleInternal)
     endif()

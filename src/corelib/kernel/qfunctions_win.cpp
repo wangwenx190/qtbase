@@ -4,6 +4,9 @@
 #include "qfunctions_win_p.h"
 
 #include <QtCore/qdebug.h>
+#ifndef QT_BOOTSTRAPPED
+#  include <QtCore/private/qsystemlibrary_p.h>
+#endif
 
 #include <combaseapi.h>
 #include <objbase.h>
@@ -14,6 +17,8 @@
 #endif
 
 QT_BEGIN_NAMESPACE
+
+using namespace Qt::StringLiterals;
 
 QComHelper::QComHelper(COINIT concurrencyModel)
 {
@@ -61,10 +66,15 @@ void qt_win_ensureComInitializedOnThisThread()
 */
 bool qt_win_hasPackageIdentity()
 {
-#if defined(HAS_APPMODEL)
+#if defined(HAS_APPMODEL) && !defined(QT_BOOTSTRAPPED)
     static const bool hasPackageIdentity = []() {
+        static const auto pGetCurrentPackageFullName =
+            reinterpret_cast<decltype(&::GetCurrentPackageFullName)>(
+                QApiCache::instance().get(QApiCache::SD_Kernel32, "GetCurrentPackageFullName"_L1));
+        if (!pGetCurrentPackageFullName)
+            return false;
         UINT32 length = 0;
-        switch (const auto result = GetCurrentPackageFullName(&length, nullptr)) {
+        switch (const auto result = pGetCurrentPackageFullName(&length, nullptr)) {
         case ERROR_INSUFFICIENT_BUFFER:
             return true;
         case APPMODEL_ERROR_NO_PACKAGE:

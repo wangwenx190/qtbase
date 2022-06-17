@@ -181,9 +181,7 @@ private:
     bool m_bufferOnIdle = true;
     QString m_currentKey;
     QString m_requestedCompressionScheme;
-#if QT_CONFIG(zstd)
     ZSTD_CCtx *m_zstdCCtx = nullptr;
-#endif
 
     static constexpr quint32 ServerId = 1;
     static constexpr quint32 DefaultMaxPackets = 256; // 1 MB

@@ -19,36 +19,66 @@
 #include <qdeadlinetimer.h>
 #include <qtsan_impl.h>
 
+#include <QtCore/qoperatingsystemversion.h>
+#include <QtCore/private/qsystemlibrary_p.h>
+
 #include <qt_windows.h>
 
-#define QT_ALWAYS_USE_FUTEX
+#ifdef QT_ALWAYS_USE_FUTEX
+#  undef QT_ALWAYS_USE_FUTEX
+#endif
 
 QT_BEGIN_NAMESPACE
 
+using namespace Qt::StringLiterals;
+
 namespace QtWindowsFutex {
-constexpr inline bool futexAvailable() { return true; }
+inline bool futexAvailable()
+{
+    return QOperatingSystemVersion::isWin8OrGreater();
+}
 
 template <typename Atomic>
 inline void futexWait(Atomic &futex, typename Atomic::Type expectedValue)
 {
+    static const auto pWaitOnAddress =
+        reinterpret_cast<decltype(&::WaitOnAddress)>(
+            QApiCache::instance().get(QApiCache::SD_KernelBase, "WaitOnAddress"_L1));
+    if (!pWaitOnAddress)
+        return;
     QtTsan::futexRelease(&futex);
-    WaitOnAddress(&futex, &expectedValue, sizeof(expectedValue), INFINITE);
+    pWaitOnAddress(&futex, &expectedValue, sizeof(expectedValue), INFINITE);
     QtTsan::futexAcquire(&futex);
 }
 template <typename Atomic>
 inline bool futexWait(Atomic &futex, typename Atomic::Type expectedValue, QDeadlineTimer deadline)
 {
+    static const auto pWaitOnAddress =
+        reinterpret_cast<decltype(&::WaitOnAddress)>(
+            QApiCache::instance().get(QApiCache::SD_KernelBase, "WaitOnAddress"_L1));
+    if (!pWaitOnAddress)
+        return false;
     using namespace std::chrono;
-    BOOL r = WaitOnAddress(&futex, &expectedValue, sizeof(expectedValue), DWORD(deadline.remainingTime()));
+    BOOL r = pWaitOnAddress(&futex, &expectedValue, sizeof(expectedValue), DWORD(deadline.remainingTime()));
     return r || GetLastError() != ERROR_TIMEOUT;
 }
 template <typename Atomic> inline void futexWakeAll(Atomic &futex)
 {
-    WakeByAddressAll(&futex);
+    static const auto pWakeByAddressAll =
+        reinterpret_cast<decltype(&::WakeByAddressAll)>(
+            QApiCache::instance().get(QApiCache::SD_KernelBase, "WakeByAddressAll"_L1));
+    if (!pWakeByAddressAll)
+        return;
+    pWakeByAddressAll(&futex);
 }
 template <typename Atomic> inline void futexWakeOne(Atomic &futex)
 {
-    WakeByAddressSingle(&futex);
+    static const auto pWakeByAddressSingle =
+        reinterpret_cast<decltype(&::WakeByAddressSingle)>(
+            QApiCache::instance().get(QApiCache::SD_KernelBase, "WakeByAddressSingle"_L1));
+    if (!pWakeByAddressSingle)
+        return;
+    pWakeByAddressSingle(&futex);
 }
 } // namespace QtWindowsFutex
 namespace QtFutex = QtWindowsFutex;

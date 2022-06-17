@@ -4,10 +4,12 @@
 #include "qrhid3d12_p.h"
 #include <qmath.h>
 #include <QtCore/private/qsystemerror_p.h>
+#include <QtCore/private/qsystemlibrary_p.h>
 #include <comdef.h>
 #include "qrhid3dhelpers_p.h"
 #include "cs_mipmap_p.h"
 #include "cs_mipmap_3d_p.h"
+#include <dwmapi.h>
 
 #if __has_include(<pix.h>)
 #include <pix.h>
@@ -150,6 +152,8 @@ QT_BEGIN_NAMESPACE
     \variable QRhiD3D12CommandBufferNativeHandles::commandList
 */
 
+using namespace Qt::StringLiterals;
+
 // https://learn.microsoft.com/en-us/windows/win32/direct3d12/hardware-feature-levels
 static const D3D_FEATURE_LEVEL MIN_FEATURE_LEVEL = D3D_FEATURE_LEVEL_11_0;
 
@@ -159,7 +163,7 @@ QRhiD3D12::QRhiD3D12(QRhiD3D12InitParams *params, QRhiD3D12NativeHandles *import
     if (importParams) {
         if (importParams->dev) {
             ID3D12Device *d3d12Device = reinterpret_cast<ID3D12Device *>(importParams->dev);
-            if (SUCCEEDED(d3d12Device->QueryInterface(__uuidof(ID3D12Device2), reinterpret_cast<void **>(&dev)))) {
+            if (SUCCEEDED(d3d12Device->QueryInterface(IID_PPV_ARGS(&dev)))) {
                 // get rid of the ref added by QueryInterface
                 d3d12Device->Release();
                 importedDevice = true;
@@ -204,19 +208,28 @@ static inline QD3D12RenderTargetData *rtData(QRhiRenderTarget *rt)
 
 bool QRhiD3D12::create(QRhi::Flags flags)
 {
+    static const auto pCreateDXGIFactory2 =
+        reinterpret_cast<decltype(&::CreateDXGIFactory2)>(
+            QApiCache::instance().get(QApiCache::SD_DXGI, "CreateDXGIFactory2"_L1));
+    static const auto pD3D12CreateDevice =
+        reinterpret_cast<decltype(&::D3D12CreateDevice)>(
+            QApiCache::instance().get(QApiCache::SD_D3D12, "D3D12CreateDevice"_L1));
+    if (!pCreateDXGIFactory2 || !pD3D12CreateDevice)
+        return false;
+
     rhiFlags = flags;
 
     UINT factoryFlags = 0;
     if (debugLayer)
         factoryFlags |= DXGI_CREATE_FACTORY_DEBUG;
-    HRESULT hr = CreateDXGIFactory2(factoryFlags, __uuidof(IDXGIFactory2), reinterpret_cast<void **>(&dxgiFactory));
+    HRESULT hr = pCreateDXGIFactory2(factoryFlags, IID_PPV_ARGS(&dxgiFactory));
     if (FAILED(hr)) {
         // retry without debug, if it was requested (to match D3D11 backend behavior)
         if (debugLayer) {
             qCDebug(QRHI_LOG_INFO, "Debug layer was requested but is not available. "
                                    "Attempting to create DXGIFactory2 without it.");
             factoryFlags &= ~DXGI_CREATE_FACTORY_DEBUG;
-            hr = CreateDXGIFactory2(factoryFlags, __uuidof(IDXGIFactory2), reinterpret_cast<void **>(&dxgiFactory));
+            hr = pCreateDXGIFactory2(factoryFlags, IID_PPV_ARGS(&dxgiFactory));
         }
         if (SUCCEEDED(hr)) {
             debugLayer = false;
@@ -234,7 +247,7 @@ bool QRhiD3D12::create(QRhi::Flags flags)
 
     supportsAllowTearing = false;
     IDXGIFactory5 *factory5 = nullptr;
-    if (SUCCEEDED(dxgiFactory->QueryInterface(__uuidof(IDXGIFactory5), reinterpret_cast<void **>(&factory5)))) {
+    if (SUCCEEDED(dxgiFactory->QueryInterface(IID_PPV_ARGS(&factory5)))) {
         BOOL allowTearing = false;
         if (SUCCEEDED(factory5->CheckFeatureSupport(DXGI_FEATURE_PRESENT_ALLOW_TEARING, &allowTearing, sizeof(allowTearing))))
             supportsAllowTearing = allowTearing;
@@ -243,7 +256,10 @@ bool QRhiD3D12::create(QRhi::Flags flags)
 
     if (debugLayer) {
         ID3D12Debug1 *debug = nullptr;
-        if (SUCCEEDED(D3D12GetDebugInterface(__uuidof(ID3D12Debug1), reinterpret_cast<void **>(&debug)))) {
+        static const auto pD3D12GetDebugInterface =
+            reinterpret_cast<decltype(&::D3D12GetDebugInterface)>(
+                QApiCache::instance().get(QApiCache::SD_D3D12, "D3D12GetDebugInterface"_L1));
+        if (pD3D12GetDebugInterface && SUCCEEDED(pD3D12GetDebugInterface(IID_PPV_ARGS(&debug)))) {
             qCDebug(QRHI_LOG_INFO, "Enabling D3D12 debug layer");
             debug->EnableDebugLayer();
             debug->Release();
@@ -315,10 +331,7 @@ bool QRhiD3D12::create(QRhi::Flags flags)
         if (minimumFeatureLevel == 0)
             minimumFeatureLevel = MIN_FEATURE_LEVEL;
 
-        hr = D3D12CreateDevice(activeAdapter,
-                               minimumFeatureLevel,
-                               __uuidof(ID3D12Device2),
-                               reinterpret_cast<void **>(&dev));
+        hr = pD3D12CreateDevice(activeAdapter, minimumFeatureLevel, IID_PPV_ARGS(&dev));
         if (FAILED(hr)) {
             qWarning("Failed to create D3D12 device: %s", qPrintable(QSystemError::windowsComString(hr)));
             return false;
@@ -352,7 +365,7 @@ bool QRhiD3D12::create(QRhi::Flags flags)
 
     if (debugLayer) {
         ID3D12InfoQueue *infoQueue;
-        if (SUCCEEDED(dev->QueryInterface(__uuidof(ID3D12InfoQueue), reinterpret_cast<void **>(&infoQueue)))) {
+        if (SUCCEEDED(dev->QueryInterface(IID_PPV_ARGS(&infoQueue)))) {
             if (qEnvironmentVariableIntValue("QT_D3D_DEBUG_BREAK")) {
                 infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_CORRUPTION, true);
                 infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_ERROR, true);
@@ -381,14 +394,14 @@ bool QRhiD3D12::create(QRhi::Flags flags)
         D3D12_COMMAND_QUEUE_DESC queueDesc = {};
         queueDesc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
         queueDesc.Priority = D3D12_COMMAND_QUEUE_PRIORITY_NORMAL;
-        hr = dev->CreateCommandQueue(&queueDesc, __uuidof(ID3D12CommandQueue), reinterpret_cast<void **>(&cmdQueue));
+        hr = dev->CreateCommandQueue(&queueDesc, IID_PPV_ARGS(&cmdQueue));
         if (FAILED(hr)) {
             qWarning("Failed to create command queue: %s", qPrintable(QSystemError::windowsComString(hr)));
             return false;
         }
     }
 
-    hr = dev->CreateFence(0, D3D12_FENCE_FLAG_NONE, __uuidof(ID3D12Fence), reinterpret_cast<void **>(&fullFence));
+    hr = dev->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fullFence));
     if (FAILED(hr)) {
         qWarning("Failed to create fence: %s", qPrintable(QSystemError::windowsComString(hr)));
         return false;
@@ -398,8 +411,7 @@ bool QRhiD3D12::create(QRhi::Flags flags)
 
     for (int i = 0; i < QD3D12_FRAMES_IN_FLIGHT; ++i) {
         hr = dev->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,
-                                         __uuidof(ID3D12CommandAllocator),
-                                         reinterpret_cast<void **>(&cmdAllocators[i]));
+                                         IID_PPV_ARGS(&cmdAllocators[i]));
         if (FAILED(hr)) {
             qWarning("Failed to create command allocator: %s", qPrintable(QSystemError::windowsComString(hr)));
             return false;
@@ -630,6 +642,12 @@ void QRhiD3D12::destroy()
 
 QRhi::AdapterList QRhiD3D12::enumerateAdaptersBeforeCreate(QRhiNativeHandles *nativeHandles) const
 {
+    static const auto pCreateDXGIFactory2 =
+        reinterpret_cast<decltype(&::CreateDXGIFactory2)>(
+            QApiCache::instance().get(QApiCache::SD_DXGI, "CreateDXGIFactory2"_L1));
+    if (!pCreateDXGIFactory2)
+        return {};
+
     LUID requestedLuid = {};
     if (nativeHandles) {
         QRhiD3D12NativeHandles *h = static_cast<QRhiD3D12NativeHandles *>(nativeHandles);
@@ -639,7 +657,7 @@ QRhi::AdapterList QRhiD3D12::enumerateAdaptersBeforeCreate(QRhiNativeHandles *na
     }
 
     IDXGIFactory2 *dxgi = nullptr;
-    if (FAILED(CreateDXGIFactory2(0, __uuidof(IDXGIFactory2), reinterpret_cast<void **>(&dxgi))))
+    if (FAILED(pCreateDXGIFactory2(0, IID_PPV_ARGS(&dxgi))))
         return {};
 
     QRhi::AdapterList list;
@@ -1823,15 +1841,24 @@ QRhi::FrameOpResult QRhiD3D12::endFrame(QRhiSwapChain *swapChain, QRhi::EndFrame
     cmdQueue->ExecuteCommandLists(1, execList);
 
     if (!flags.testFlag(QRhi::SkipPresent)) {
+        if (!swapChainD->swapChain) {
+            qWarning("Failed to present, no swapchain");
+            return QRhi::FrameOpError;
+        }
         UINT presentFlags = 0;
         if (swapChainD->swapInterval == 0
                 && (swapChainD->swapChainFlags & DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING))
         {
             presentFlags |= DXGI_PRESENT_ALLOW_TEARING;
         }
-        if (!swapChainD->swapChain) {
-            qWarning("Failed to present, no swapchain");
-            return QRhi::FrameOpError;
+        static const bool requestPresentRestart = qEnvironmentVariableIntValue("QT_D3D_PRESENT_RESTART");
+        if (requestPresentRestart) {
+            presentFlags |= DXGI_PRESENT_RESTART;
+            static bool informOnce = false;
+            if (!informOnce) {
+                informOnce = true;
+                qCDebug(QRHI_LOG_INFO) << "\"DXGI_PRESENT_RESTART\" is enabled for DXGI swap chain presentation.";
+            }
         }
         HRESULT hr = swapChainD->swapChain->Present(swapChainD->swapInterval, presentFlags);
         if (hr == DXGI_ERROR_DEVICE_REMOVED || hr == DXGI_ERROR_DEVICE_RESET) {
@@ -1845,6 +1872,21 @@ QRhi::FrameOpResult QRhiD3D12::endFrame(QRhiSwapChain *swapChain, QRhi::EndFrame
 
         if (dcompDevice && swapChainD->dcompTarget && swapChainD->dcompVisual)
             dcompDevice->Commit();
+
+        static const bool requestDwmFlush = qEnvironmentVariableIntValue("QT_RHI_DWM_FLUSH");
+        if (requestDwmFlush) {
+            static bool informOnce = false;
+            if (!informOnce) {
+                informOnce = true;
+                qCDebug(QRHI_LOG_INFO) << "DWM flush is requested every time after DXGI swap chain presentation.";
+            }
+            static const auto pDwmFlush =
+                reinterpret_cast<decltype(&::DwmFlush)>(
+                    QApiCache::instance().get(QApiCache::SD_DWMAPI, "DwmFlush"_L1));
+            if (pDwmFlush) {
+                pDwmFlush();
+            }
+        }
     }
 
     swapChainD->addCommandCompletionSignalForCurrentFrameSlot();
@@ -2280,7 +2322,7 @@ bool QD3D12DescriptorHeap::create(ID3D12Device *device,
     heapDesc.NumDescriptors = capacity;
     heapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAGS(heapFlags);
 
-    HRESULT hr = device->CreateDescriptorHeap(&heapDesc, __uuidof(ID3D12DescriptorHeap), reinterpret_cast<void **>(&heap));
+    HRESULT hr = device->CreateDescriptorHeap(&heapDesc, IID_PPV_ARGS(&heap));
     if (FAILED(hr)) {
         qWarning("Failed to create descriptor heap: %s", qPrintable(QSystemError::windowsComString(hr)));
         heap = nullptr;
@@ -2458,7 +2500,7 @@ bool QD3D12QueryHeap::create(ID3D12Device *device,
     heapDesc.Type = heapType;
     heapDesc.Count = capacity;
 
-    HRESULT hr = device->CreateQueryHeap(&heapDesc, __uuidof(ID3D12QueryHeap), reinterpret_cast<void **>(&heap));
+    HRESULT hr = device->CreateQueryHeap(&heapDesc, IID_PPV_ARGS(&heap));
     if (FAILED(hr)) {
         qWarning("Failed to create query heap: %s", qPrintable(QSystemError::windowsComString(hr)));
         heap = nullptr;
@@ -2497,8 +2539,7 @@ bool QD3D12StagingArea::create(QRhiD3D12 *rhi, quint32 capacity, D3D12_HEAP_TYPE
                                          D3D12_RESOURCE_STATES(state),
                                          nullptr,
                                          &allocation,
-                                         __uuidof(ID3D12Resource),
-                                         reinterpret_cast<void **>(&resource));
+                                         IID_PPV_ARGS(&resource));
     if (FAILED(hr)) {
         qWarning("Failed to create buffer for staging area: %s",
                  qPrintable(QSystemError::windowsComString(hr)));
@@ -2962,6 +3003,12 @@ QD3D12Descriptor QD3D12SamplerManager::getShaderVisibleDescriptor(const D3D12_SA
 
 bool QD3D12MipmapGenerator::create(QRhiD3D12 *rhiD)
 {
+    static const auto pD3D12SerializeVersionedRootSignature =
+        reinterpret_cast<decltype(&::D3D12SerializeVersionedRootSignature)>(
+            QApiCache::instance().get(QApiCache::SD_D3D12, "D3D12SerializeVersionedRootSignature"_L1));
+    if (!pD3D12SerializeVersionedRootSignature)
+        return false;
+
     this->rhiD = rhiD;
 
     D3D12_ROOT_PARAMETER1 rootParams[3] = {};
@@ -3005,7 +3052,7 @@ bool QD3D12MipmapGenerator::create(QRhiD3D12 *rhiD)
     rsDesc.Desc_1_1.pStaticSamplers = &samplerDesc;
 
     ID3DBlob *signature = nullptr;
-    HRESULT hr = D3D12SerializeVersionedRootSignature(&rsDesc, &signature, nullptr);
+    HRESULT hr = pD3D12SerializeVersionedRootSignature(&rsDesc, &signature, nullptr);
     if (FAILED(hr)) {
         qWarning("Failed to serialize root signature: %s", qPrintable(QSystemError::windowsComString(hr)));
         return false;
@@ -3014,8 +3061,7 @@ bool QD3D12MipmapGenerator::create(QRhiD3D12 *rhiD)
     hr = rhiD->dev->CreateRootSignature(0,
                                         signature->GetBufferPointer(),
                                         signature->GetBufferSize(),
-                                        __uuidof(ID3D12RootSignature),
-                                        reinterpret_cast<void **>(&rootSig));
+                                        IID_PPV_ARGS(&rootSig));
     signature->Release();
     if (FAILED(hr)) {
         qWarning("Failed to create root signature: %s",
@@ -3030,9 +3076,7 @@ bool QD3D12MipmapGenerator::create(QRhiD3D12 *rhiD)
     psoDesc.CS.pShaderBytecode = g_csMipmap;
     psoDesc.CS.BytecodeLength = sizeof(g_csMipmap);
     ID3D12PipelineState *pso = nullptr;
-    hr = rhiD->dev->CreateComputePipelineState(&psoDesc,
-                                               __uuidof(ID3D12PipelineState),
-                                               reinterpret_cast<void **>(&pso));
+    hr = rhiD->dev->CreateComputePipelineState(&psoDesc, IID_PPV_ARGS(&pso));
     if (FAILED(hr)) {
         qWarning("Failed to create compute pipeline state: %s",
                  qPrintable(QSystemError::windowsComString(hr)));
@@ -3214,6 +3258,12 @@ void QD3D12MipmapGenerator::generate(QD3D12CommandBuffer *cbD, const QD3D12Objec
 
 bool QD3D12MipmapGenerator3D::create(QRhiD3D12 *rhiD)
 {
+    static const auto pD3D12SerializeVersionedRootSignature =
+        reinterpret_cast<decltype(&::D3D12SerializeVersionedRootSignature)>(
+            QApiCache::instance().get(QApiCache::SD_D3D12, "D3D12SerializeVersionedRootSignature"_L1));
+    if (!pD3D12SerializeVersionedRootSignature)
+        return false;
+
     this->rhiD = rhiD;
 
     D3D12_ROOT_PARAMETER1 rootParams[3] = {};
@@ -3257,7 +3307,7 @@ bool QD3D12MipmapGenerator3D::create(QRhiD3D12 *rhiD)
     rsDesc.Desc_1_1.pStaticSamplers = &samplerDesc;
 
     ID3DBlob *signature = nullptr;
-    HRESULT hr = D3D12SerializeVersionedRootSignature(&rsDesc, &signature, nullptr);
+    HRESULT hr = pD3D12SerializeVersionedRootSignature(&rsDesc, &signature, nullptr);
     if (FAILED(hr)) {
         qWarning("Failed to serialize root signature: %s", qPrintable(QSystemError::windowsComString(hr)));
         return false;
@@ -3549,8 +3599,7 @@ bool QRhiD3D12::startCommandListForCurrentFrameSlot(D3D12GraphicsCommandList **c
                                             D3D12_COMMAND_LIST_TYPE_DIRECT,
                                             cmdAlloc,
                                             nullptr,
-                                            __uuidof(D3D12GraphicsCommandList),
-                                            reinterpret_cast<void **>(cmdList));
+                                            IID_PPV_ARGS(cmdList));
         if (FAILED(hr)) {
             qWarning("Failed to create command list: %s", qPrintable(QSystemError::windowsComString(hr)));
             return false;
@@ -4172,8 +4221,7 @@ bool QD3D12Buffer::create()
                                           resourceState,
                                           nullptr,
                                           &allocation,
-                                          __uuidof(resource),
-                                          reinterpret_cast<void **>(&resource));
+                                          IID_PPV_ARGS(&resource));
             if (FAILED(hr))
                 break;
             if (!m_objectName.isEmpty()) {
@@ -4451,8 +4499,7 @@ bool QD3D12RenderBuffer::create()
                                               D3D12_RESOURCE_STATE_RENDER_TARGET,
                                               &clearValue,
                                               &allocation,
-                                              __uuidof(ID3D12Resource),
-                                              reinterpret_cast<void **>(&resource));
+                                              IID_PPV_ARGS(&resource));
         if (FAILED(hr)) {
             qWarning("Failed to create color buffer: %s", qPrintable(QSystemError::windowsComString(hr)));
             return false;
@@ -4495,8 +4542,7 @@ bool QD3D12RenderBuffer::create()
                                               D3D12_RESOURCE_STATE_DEPTH_WRITE,
                                               &clearValue,
                                               &allocation,
-                                              __uuidof(ID3D12Resource),
-                                              reinterpret_cast<void **>(&resource));
+                                              IID_PPV_ARGS(&resource));
         if (FAILED(hr)) {
             qWarning("Failed to create depth-stencil buffer: %s", qPrintable(QSystemError::windowsComString(hr)));
             return false;
@@ -4854,8 +4900,7 @@ bool QD3D12Texture::create()
                                           D3D12_RESOURCE_STATE_COMMON,
                                           needsOptimizedClearValueSpecified ? &clearValue : nullptr,
                                           &allocation,
-                                          __uuidof(ID3D12Resource),
-                                          reinterpret_cast<void **>(&resource));
+                                          IID_PPV_ARGS(&resource));
     if (FAILED(hr)) {
         qWarning("Failed to create texture: '%s'"
                  " Dim was %d Size was %ux%u Depth/ArraySize was %u MipLevels was %u Format was %d Sample count was %d",
@@ -5463,6 +5508,12 @@ void QD3D12ShaderResourceBindings::visitStorageImage(QD3D12Stage s,
 QD3D12ObjectHandle QD3D12ShaderResourceBindings::createRootSignature(const QD3D12ShaderStageData *stageData,
                                                                      int stageCount)
 {
+    static const auto pD3D12SerializeVersionedRootSignature =
+        reinterpret_cast<decltype(&::D3D12SerializeVersionedRootSignature)>(
+            QApiCache::instance().get(QApiCache::SD_D3D12, "D3D12SerializeVersionedRootSignature"_L1));
+    if (!pD3D12SerializeVersionedRootSignature)
+        return {};
+
     QRHI_RES_RHI(QRhiD3D12);
 
     // It's not just that the root signature has to be tied to the pipeline
@@ -5549,7 +5600,7 @@ QD3D12ObjectHandle QD3D12ShaderResourceBindings::createRootSignature(const QD3D1
     rsDesc.Desc_1_1.Flags = D3D12_ROOT_SIGNATURE_FLAGS(rsFlags);
 
     ID3DBlob *signature = nullptr;
-    HRESULT hr = D3D12SerializeVersionedRootSignature(&rsDesc, &signature, nullptr);
+    HRESULT hr = pD3D12SerializeVersionedRootSignature(&rsDesc, &signature, nullptr);
     if (FAILED(hr)) {
         qWarning("Failed to serialize root signature: %s", qPrintable(QSystemError::windowsComString(hr)));
         return {};
@@ -5558,8 +5609,7 @@ QD3D12ObjectHandle QD3D12ShaderResourceBindings::createRootSignature(const QD3D1
     hr = rhiD->dev->CreateRootSignature(0,
                                         signature->GetBufferPointer(),
                                         signature->GetBufferSize(),
-                                        __uuidof(ID3D12RootSignature),
-                                        reinterpret_cast<void **>(&rootSig));
+                                        IID_PPV_ARGS(&rootSig));
     signature->Release();
     if (FAILED(hr)) {
         qWarning("Failed to create root signature: %s", qPrintable(QSystemError::windowsComString(hr)));
@@ -5642,7 +5692,7 @@ static QByteArray legacyCompile(const QShaderCode &hlslSource, const char *targe
 
 static QByteArray dxcCompile(const QShaderCode &hlslSource, const char *target, int flags, QString *error)
 {
-    static std::pair<IDxcCompiler *, IDxcLibrary *> dxc = QRhiD3D::createDxcCompiler();
+    static const std::pair<IDxcCompiler *, IDxcLibrary *> dxc = QRhiD3D::createDxcCompiler();
     IDxcCompiler *compiler = dxc.first;
     if (!compiler) {
         qWarning("Unable to instantiate IDxcCompiler. Likely no dxcompiler.dll and dxil.dll present. "
@@ -6307,7 +6357,7 @@ bool QD3D12GraphicsPipeline::create()
     const D3D12_PIPELINE_STATE_STREAM_DESC streamDesc = { sizeof(stream), &stream };
 
     ID3D12PipelineState *pso = nullptr;
-    HRESULT hr = rhiD->dev->CreatePipelineState(&streamDesc, __uuidof(ID3D12PipelineState), reinterpret_cast<void **>(&pso));
+    HRESULT hr = rhiD->dev->CreatePipelineState(&streamDesc, IID_PPV_ARGS(&pso));
     if (FAILED(hr)) {
         qWarning("Failed to create graphics pipeline state: %s",
                  qPrintable(QSystemError::windowsComString(hr)));
@@ -6415,7 +6465,7 @@ bool QD3D12ComputePipeline::create()
     stream.CS.object.BytecodeLength = shaderBytecode.size();
     const D3D12_PIPELINE_STATE_STREAM_DESC streamDesc = { sizeof(stream), &stream };
     ID3D12PipelineState *pso = nullptr;
-    HRESULT hr = rhiD->dev->CreatePipelineState(&streamDesc, __uuidof(ID3D12PipelineState), reinterpret_cast<void **>(&pso));
+    HRESULT hr = rhiD->dev->CreatePipelineState(&streamDesc, IID_PPV_ARGS(&pso));
     if (FAILED(hr)) {
         qWarning("Failed to create compute pipeline state: %s",
                  qPrintable(QSystemError::windowsComString(hr)));
@@ -6882,7 +6932,7 @@ bool QD3D12SwapChain::createOrResize()
         }
 
         if (SUCCEEDED(hr)) {
-            if (FAILED(sourceSwapChain1->QueryInterface(__uuidof(IDXGISwapChain3), reinterpret_cast<void **>(&swapChain)))) {
+            if (FAILED(sourceSwapChain1->QueryInterface(IID_PPV_ARGS(&swapChain)))) {
                 qWarning("IDXGISwapChain3 not available");
                 return false;
             }
@@ -6926,8 +6976,7 @@ bool QD3D12SwapChain::createOrResize()
         for (int i = 0; i < QD3D12_FRAMES_IN_FLIGHT; ++i) {
             hr = rhiD->dev->CreateFence(0,
                                         D3D12_FENCE_FLAG_NONE,
-                                        __uuidof(ID3D12Fence),
-                                        reinterpret_cast<void **>(&frameRes[i].fence));
+                                        IID_PPV_ARGS(&frameRes[i].fence));
             if (FAILED(hr)) {
                 qWarning("Failed to create fence for swapchain: %s",
                          qPrintable(QSystemError::windowsComString(hr)));
@@ -6956,7 +7005,7 @@ bool QD3D12SwapChain::createOrResize()
 
     for (UINT i = 0; i < BUFFER_COUNT; ++i) {
         ID3D12Resource *colorBuffer;
-        hr = swapChain->GetBuffer(i, __uuidof(ID3D12Resource), reinterpret_cast<void **>(&colorBuffer));
+        hr = swapChain->GetBuffer(i, IID_PPV_ARGS(&colorBuffer));
         if (FAILED(hr)) {
             qWarning("Failed to get buffer %u for D3D12 swapchain: %s",
                      i, qPrintable(QSystemError::windowsComString(hr)));
@@ -7020,8 +7069,7 @@ bool QD3D12SwapChain::createOrResize()
                                                   D3D12_RESOURCE_STATE_RENDER_TARGET,
                                                   &clearValue,
                                                   &allocation,
-                                                  __uuidof(ID3D12Resource),
-                                                  reinterpret_cast<void **>(&resource));
+                                                  IID_PPV_ARGS(&resource));
             if (FAILED(hr)) {
                 qWarning("Failed to create MSAA color buffer: %s", qPrintable(QSystemError::windowsComString(hr)));
                 return false;

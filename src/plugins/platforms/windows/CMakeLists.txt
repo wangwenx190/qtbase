@@ -29,6 +29,7 @@ qt_internal_add_plugin(QWindowsIntegrationPlugin
         qwindowskeymapper.cpp qwindowskeymapper.h
         qwindowsmenu.cpp qwindowsmenu.h
         qwindowsmimeregistry.cpp qwindowsmimeregistry.h
+        qwindowsmousehandler.cpp qwindowsmousehandler.h
         qwindowsnativeinterface.cpp qwindowsnativeinterface.h
         qwindowsole.cpp qwindowsole.h
         qwindowsopengltester.cpp qwindowsopengltester.h
@@ -51,7 +52,6 @@ qt_internal_add_plugin(QWindowsIntegrationPlugin
         Qt::Gui
         Qt::GuiPrivate
         advapi32
-        dwmapi
         gdi32
         uxtheme
         imm32
@@ -64,10 +64,7 @@ qt_internal_add_plugin(QWindowsIntegrationPlugin
         winmm
         winspool
         wtsapi32
-        shcore
         comdlg32
-        d3d9
-        runtimeobject
 )
 
 # Resources:
@@ -91,6 +88,7 @@ qt_internal_add_resource(QWindowsIntegrationPlugin "openglblacklists"
 qt_internal_extend_target(QWindowsIntegrationPlugin CONDITION QT_FEATURE_opengl
     SOURCES
         qwindowsglcontext.cpp qwindowsglcontext.h
+        qwindowseglcontext.cpp qwindowseglcontext.h
         qwindowsopenglcontext.h
     LIBRARIES
         Qt::OpenGLPrivate

@@ -24,7 +24,7 @@ class Q_CORE_EXPORT QBasicMutex
     Q_DISABLE_COPY_MOVE(QBasicMutex)
 protected:
     static constexpr bool FutexAlwaysAvailable =
-#if defined(Q_OS_FREEBSD) || defined(Q_OS_LINUX) || defined(Q_OS_WIN) // these platforms use futex
+#if defined(Q_OS_FREEBSD) || defined(Q_OS_LINUX) /*|| defined(Q_OS_WIN)*/ // these platforms use futex
             true
 #else
             false

@@ -34,9 +34,7 @@ void dumpRecursive(const QDir &dir, QTextStream &out)
         if (entry.isDir()) {
             dumpRecursive(entry.filePath(), out);
         } else {
-            out << "<file>"_L1
-                << entry.filePath()
-                << "</file>\n"_L1;
+            out << "  <file>"_L1 << entry.filePath() << "</file>\n"_L1;
         }
     }
 }
@@ -64,7 +62,8 @@ int createProject(const QString &outFileName)
     }
 
     QTextStream out(&file);
-    out << "<!DOCTYPE RCC><RCC version=\"1.0\">\n"
+    out << "<!DOCTYPE RCC>\n"
+           "<RCC version=\"1.0\">\n"
            "<qresource>\n"_L1;
 
     // use "." as dir to get relative file paths
@@ -136,12 +135,8 @@ int runRcc(int argc, char *argv[])
     QCommandLineOption rootOption(QStringLiteral("root"), QStringLiteral("Prefix resource access path with root path."), QStringLiteral("path"));
     parser.addOption(rootOption);
 
-#if QT_CONFIG(zstd) && !defined(QT_NO_COMPRESS)
+#if !defined(QT_NO_COMPRESS)
 #  define ALGOS     "[zstd], zlib, none"
-#elif QT_CONFIG(zstd)
-#  define ALGOS     "[zstd], none"
-#elif !defined(QT_NO_COMPRESS)
-#  define ALGOS     "[zlib], none"
 #else
 #  define ALGOS     "[none]"
 #endif

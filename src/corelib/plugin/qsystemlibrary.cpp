@@ -5,7 +5,10 @@
 #include <QtCore/qvarlengtharray.h>
 #include <QtCore/qstringlist.h>
 #include <QtCore/qfileinfo.h>
+#include <QtCore/qhash.h>
+#include <QtCore/qloggingcategory.h>
 #include <QtCore/private/wcharhelpers_win_p.h>
+#include <array>
 
 /*!
 
@@ -37,6 +40,8 @@
 
 QT_BEGIN_NAMESPACE
 
+Q_STATIC_LOGGING_CATEGORY(lcQSysLib, "qt.core.systemlibrary", QtWarningMsg);
+
 using namespace Qt::StringLiterals;
 
 #if !defined(QT_BOOTSTRAPPED)
@@ -53,15 +58,25 @@ static QString qSystemDirectory()
             retLen = ::GetSystemDirectoryW(fullPath.data(), retLen);
         }
         // in some rare cases retLen might be 0
-        return QString::fromWCharArray(fullPath.constData(), int(retLen));
+        return QString::fromWCharArray(fullPath.constData(), retLen);
     }();
     return result;
 }
 
 HINSTANCE QSystemLibrary::load(const wchar_t *libraryName, bool onlySystemDirectory /* = true */)
 {
-    if (onlySystemDirectory)
-        return ::LoadLibraryExW(libraryName, nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+    {
+        if (HMODULE instance = ::GetModuleHandleW(libraryName)) {
+            return instance;
+        }
+    }
+
+    const QString fileName = QString::fromWCharArray(libraryName);
+
+    if (onlySystemDirectory) {
+        const QString path = qSystemDirectory() + u'\\' + fileName;
+        return ::LoadLibraryW(qt_castToWchar(path));
+    }
 
     QStringList searchOrder;
 
@@ -72,8 +87,6 @@ HINSTANCE QSystemLibrary::load(const wchar_t *libraryName, bool onlySystemDirect
 
     const QString PATH(QLatin1StringView(qgetenv("PATH")));
     searchOrder << PATH.split(u';', Qt::SkipEmptyParts);
-
-    const QString fileName = QString::fromWCharArray(libraryName);
 
     // Start looking in the order specified
     for (int i = 0; i < searchOrder.count(); ++i) {
@@ -87,6 +100,86 @@ HINSTANCE QSystemLibrary::load(const wchar_t *libraryName, bool onlySystemDirect
             return inst;
     }
     return nullptr;
+}
+
+struct QApiCache::D final
+{
+    D(QApiCache *qq);
+    ~D();
+    Q_DISABLE_COPY_MOVE(D)
+
+    QApiCache *q = nullptr;
+    std::array<QString, QApiCache::SD_MAX> dllNameMap{};
+    std::array<QHash<QString, QFunctionPointer>, QApiCache::SD_MAX> funcMap{};
+};
+
+QApiCache::D::D(QApiCache *qq) : q(qq)
+{
+    Q_ASSERT(q);
+    const QString dllPrefix = qSystemDirectory() + u'\\';
+    dllNameMap[QApiCache::SD_Kernel32] = dllPrefix + "kernel32.dll"_L1;
+    dllNameMap[QApiCache::SD_User32] = dllPrefix + "user32.dll"_L1;
+    dllNameMap[QApiCache::SD_Shell32] = dllPrefix + "shell32.dll"_L1;
+    dllNameMap[QApiCache::SD_GDI32] = dllPrefix + "gdi32.dll"_L1;
+    dllNameMap[QApiCache::SD_SHCore] = dllPrefix + "shcore.dll"_L1;
+    dllNameMap[QApiCache::SD_DWMAPI] = dllPrefix + "dwmapi.dll"_L1;
+    dllNameMap[QApiCache::SD_DWrite] = dllPrefix + "dwrite.dll"_L1;
+    dllNameMap[QApiCache::SD_DXGI] = dllPrefix + "dxgi.dll"_L1;
+    dllNameMap[QApiCache::SD_DComp] = dllPrefix + "dcomp.dll"_L1;
+    dllNameMap[QApiCache::SD_D3D9] = dllPrefix + "d3d9.dll"_L1;
+    dllNameMap[QApiCache::SD_D3D11] = dllPrefix + "d3d11.dll"_L1;
+    dllNameMap[QApiCache::SD_D3D12] = dllPrefix + "d3d12.dll"_L1;
+    dllNameMap[QApiCache::SD_PSAPI] = dllPrefix + "psapi.dll"_L1;
+    dllNameMap[QApiCache::SD_NTDLL] = dllPrefix + "ntdll.dll"_L1;
+    dllNameMap[QApiCache::SD_DNSAPI] = dllPrefix + "dnsapi.dll"_L1;
+    dllNameMap[QApiCache::SD_KernelBase] = dllPrefix + "kernelbase.dll"_L1;
+    dllNameMap[QApiCache::SD_ComBase] = dllPrefix + "combase.dll"_L1;
+    dllNameMap[QApiCache::SD_OpenGL32] = dllPrefix + "opengl32.dll"_L1;
+}
+
+QApiCache::D::~D() = default;
+
+QApiCache::QApiCache() : d(std::make_unique<D>(this)) {}
+
+QApiCache::~QApiCache() = default;
+
+const QApiCache &QApiCache::instance()
+{
+    static const QApiCache inst{};
+    return inst;
+}
+
+QFunctionPointer QApiCache::get(const qsizetype dll, const QString &funcName) const
+{
+    Q_ASSERT(dll >= 0 && dll < SD_MAX);
+    Q_ASSERT(!funcName.isEmpty());
+    if (dll < 0 || dll >= SD_MAX || funcName.isEmpty()) {
+        qCWarning(lcQSysLib) << Q_FUNC_INFO << ": parameter invalid.";
+        return nullptr;
+    }
+    auto &funcMap = d->funcMap[dll];
+    const auto it = funcMap.constFind(funcName);
+    if (it != funcMap.constEnd()) {
+        return it.value();
+    }
+    const QString &dllName = d->dllNameMap[dll];
+    auto &funcAddr = funcMap[funcName];
+    qCDebug(lcQSysLib) << "Trying to load" << funcName << "from" << dllName << "...";
+    const auto dllNameC = qt_castToWchar(dllName);
+    HMODULE hDll = ::GetModuleHandleW(dllNameC);
+    if (!hDll) {
+        hDll = ::LoadLibraryW(dllNameC);
+    }
+    if (!hDll) {
+        qCWarning(lcQSysLib) << "Failed to load library" << dllName;
+        return nullptr;
+    }
+    funcAddr = reinterpret_cast<QFunctionPointer>(::GetProcAddress(hDll, funcName.toUtf8().constData()));
+    if (!funcAddr) {
+        qCWarning(lcQSysLib) << "Failed to resolve symbol" << funcName;
+        return nullptr;
+    }
+    return funcAddr;
 }
 
 QT_END_NAMESPACE

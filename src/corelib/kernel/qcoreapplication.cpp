@@ -131,6 +131,8 @@ Q_TRACE_POINT(qtcore, QCoreApplication_sendSpontaneousEvent, QObject *receiver, 
 Q_TRACE_POINT(qtcore, QCoreApplication_notify_entry, QObject *receiver, QEvent *event, QEvent::Type type);
 Q_TRACE_POINT(qtcore, QCoreApplication_notify_exit, bool consumed, bool filtered);
 
+[[maybe_unused]] static constexpr const char kWwx190EnvVar[] = "__wangwenx190__";
+
 #if (defined(Q_OS_WIN) || defined(Q_OS_DARWIN)) && !defined(QT_BOOTSTRAPPED)
 extern QString qAppFileName();
 #endif
@@ -475,6 +477,9 @@ QCoreApplicationPrivate::QCoreApplicationPrivate(int &aargc, char **aargv)
 
 QCoreApplicationPrivate::~QCoreApplicationPrivate()
 {
+#ifndef QT_BOOTSTRAPPED
+    qunsetenv(kWwx190EnvVar);
+#endif
 #ifndef QT_NO_QOBJECT
     cleanupThreadData();
 #endif
@@ -795,6 +800,10 @@ void Q_TRACE_INSTRUMENT(qtcore) QCoreApplicationPrivate::init()
     g_self.storeRelaxed(q);
 #else
     QCoreApplication::self.storeRelaxed(q);
+#endif
+
+#ifndef QT_BOOTSTRAPPED
+    qputenv(kWwx190EnvVar, QByteArray::number(__wangwenx190__()));
 #endif
 
 #if QT_CONFIG(thread)

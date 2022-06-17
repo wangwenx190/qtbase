@@ -2,13 +2,22 @@
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
 
 #include "qdxgihdrinfo_p.h"
+#include <QtCore/private/qsystemlibrary_p.h>
 #include <QtCore/private/qsystemerror_p.h>
 
 QT_BEGIN_NAMESPACE
 
+using namespace Qt::StringLiterals;
+
 QDxgiHdrInfo::QDxgiHdrInfo()
 {
-    HRESULT hr = CreateDXGIFactory2(0, __uuidof(IDXGIFactory2), reinterpret_cast<void **>(&m_factory));
+    static const auto pCreateDXGIFactory2 =
+        reinterpret_cast<decltype(&::CreateDXGIFactory2)>(
+            QApiCache::instance().get(QApiCache::SD_DXGI, "CreateDXGIFactory2"_L1));
+    if (!pCreateDXGIFactory2) {
+        return;
+    }
+    HRESULT hr = pCreateDXGIFactory2(0, IID_PPV_ARGS(&m_factory));
     if (FAILED(hr)) {
         qWarning("QDxgiHdrInfo: CreateDXGIFactory2 failed: %s", qPrintable(QSystemError::windowsComString(hr)));
         return;
@@ -22,7 +31,13 @@ QDxgiHdrInfo::QDxgiHdrInfo()
 
 QDxgiHdrInfo::QDxgiHdrInfo(LUID luid)
 {
-    HRESULT hr = CreateDXGIFactory2(0, __uuidof(IDXGIFactory2), reinterpret_cast<void **>(&m_factory));
+    static const auto pCreateDXGIFactory2 =
+        reinterpret_cast<decltype(&::CreateDXGIFactory2)>(
+            QApiCache::instance().get(QApiCache::SD_DXGI, "CreateDXGIFactory2"_L1));
+    if (!pCreateDXGIFactory2) {
+        return;
+    }
+    HRESULT hr = pCreateDXGIFactory2(0, IID_PPV_ARGS(&m_factory));
     if (FAILED(hr)) {
         qWarning("QDxgiHdrInfo: CreateDXGIFactory2 failed: %s", qPrintable(QSystemError::windowsComString(hr)));
         return;
@@ -142,7 +157,7 @@ bool QDxgiHdrInfo::output6ForWindow(QWindow *w, IDXGIAdapter1 *adapter, IDXGIOut
         }
     }
     if (currentOutput) {
-        ok = SUCCEEDED(currentOutput->QueryInterface(__uuidof(IDXGIOutput6), reinterpret_cast<void **>(result)));
+        ok = SUCCEEDED(currentOutput->QueryInterface(IID_PPV_ARGS(result)));
         currentOutput->Release();
     }
     return ok;
@@ -161,14 +176,27 @@ bool QDxgiHdrInfo::outputDesc1ForWindow(QWindow *w, IDXGIAdapter1 *adapter, DXGI
 
 float QDxgiHdrInfo::sdrWhiteLevelInNits(const DXGI_OUTPUT_DESC1 &outputDesc)
 {
+    static const auto pGetDisplayConfigBufferSizes =
+        reinterpret_cast<decltype(&::GetDisplayConfigBufferSizes)>(
+            QApiCache::instance().get(QApiCache::SD_User32, "GetDisplayConfigBufferSizes"_L1));
+    static const auto pQueryDisplayConfig =
+        reinterpret_cast<decltype(&::QueryDisplayConfig)>(
+            QApiCache::instance().get(QApiCache::SD_User32, "QueryDisplayConfig"_L1));
+    static const auto pDisplayConfigGetDeviceInfo =
+        reinterpret_cast<decltype(&::DisplayConfigGetDeviceInfo)>(
+            QApiCache::instance().get(QApiCache::SD_User32, "DisplayConfigGetDeviceInfo"_L1));
+
+    if (!pGetDisplayConfigBufferSizes || !pQueryDisplayConfig || !pDisplayConfigGetDeviceInfo)
+        return 200.0f;
+
     QVector<DISPLAYCONFIG_PATH_INFO> pathInfos;
     uint32_t pathInfoCount, modeInfoCount;
     LONG result;
     do {
-        if (GetDisplayConfigBufferSizes(QDC_ONLY_ACTIVE_PATHS, &pathInfoCount, &modeInfoCount) == ERROR_SUCCESS) {
+        if (pGetDisplayConfigBufferSizes(QDC_ONLY_ACTIVE_PATHS, &pathInfoCount, &modeInfoCount) == ERROR_SUCCESS) {
             pathInfos.resize(pathInfoCount);
             QVector<DISPLAYCONFIG_MODE_INFO> modeInfos(modeInfoCount);
-            result = QueryDisplayConfig(QDC_ONLY_ACTIVE_PATHS, &pathInfoCount, pathInfos.data(), &modeInfoCount, modeInfos.data(), nullptr);
+            result = pQueryDisplayConfig(QDC_ONLY_ACTIVE_PATHS, &pathInfoCount, pathInfos.data(), &modeInfoCount, modeInfos.data(), nullptr);
         } else {
             return 200.0f;
         }
@@ -184,14 +212,14 @@ float QDxgiHdrInfo::sdrWhiteLevelInNits(const DXGI_OUTPUT_DESC1 &outputDesc)
         deviceName.header.size = sizeof(deviceName);
         deviceName.header.adapterId = info.sourceInfo.adapterId;
         deviceName.header.id = info.sourceInfo.id;
-        if (DisplayConfigGetDeviceInfo(&deviceName.header) == ERROR_SUCCESS) {
+        if (pDisplayConfigGetDeviceInfo(&deviceName.header) == ERROR_SUCCESS) {
             if (!wcscmp(monitorInfo.szDevice, deviceName.viewGdiDeviceName)) {
                 DISPLAYCONFIG_SDR_WHITE_LEVEL whiteLevel = {};
                 whiteLevel.header.type = DISPLAYCONFIG_DEVICE_INFO_GET_SDR_WHITE_LEVEL;
                 whiteLevel.header.size = sizeof(DISPLAYCONFIG_SDR_WHITE_LEVEL);
                 whiteLevel.header.adapterId = info.targetInfo.adapterId;
                 whiteLevel.header.id = info.targetInfo.id;
-                if (DisplayConfigGetDeviceInfo(&whiteLevel.header) == ERROR_SUCCESS)
+                if (pDisplayConfigGetDeviceInfo(&whiteLevel.header) == ERROR_SUCCESS)
                     return whiteLevel.SDRWhiteLevel * 80 / 1000.0f;
             }
         }

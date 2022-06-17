@@ -47,8 +47,14 @@ QT_WARNING_POP
 #include <QtGui/qwindow.h>
 #include <private/qvulkandefaultinstance_p.h>
 #include <optional>
+#ifdef Q_OS_WINDOWS
+#  include <QtCore/private/qsystemlibrary_p.h>
+#  include <dwmapi.h>
+#endif
 
 QT_BEGIN_NAMESPACE
+
+using namespace Qt::StringLiterals;
 
 /*
   Vulkan 1.0 backend. Provides a double-buffered swapchain that throttles the
@@ -2303,9 +2309,11 @@ bool QRhiVulkan::recreateSwapChain(QRhiSwapChain *swapChain)
     // with VK_ERROR_NATIVE_WINDOW_IN_USE_KHR if the old swapchain is provided)
     const bool reuseExisting = swapChainD->sc && swapChainD->lastConnectedSurface == swapChainD->surface;
 
+#if 0 // Maybe useful but add too much noise.
     qCDebug(QRHI_LOG_INFO, "Creating %s swapchain of %u buffers, size %dx%d, presentation mode %d",
             reuseExisting ? "recycled" : "new",
             reqBufferCount, swapChainD->pixelSize.width(), swapChainD->pixelSize.height(), presentMode);
+#endif
 
     VkSwapchainCreateInfoKHR swapChainInfo = {};
     swapChainInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
@@ -2791,6 +2799,23 @@ QRhi::FrameOpResult QRhiVulkan::endFrame(QRhiSwapChain *swapChain, QRhi::EndFram
         // Do platform-specific WM notification. F.ex. essential on X11 in
         // order to prevent glitches on resizing the window.
         inst->presentQueued(swapChainD->window);
+
+#ifdef Q_OS_WINDOWS
+        static const bool requestDwmFlush = qEnvironmentVariableIntValue("QT_RHI_DWM_FLUSH");
+        if (requestDwmFlush) {
+            static bool informOnce = false;
+            if (!informOnce) {
+                informOnce = true;
+                qCDebug(QRHI_LOG_INFO) << "DWM flush is requested every time after Vulkan swap chain presentation.";
+            }
+            static const auto pDwmFlush =
+                reinterpret_cast<decltype(&::DwmFlush)>(
+                    QApiCache::instance().get(QApiCache::SD_DWMAPI, "DwmFlush"_L1));
+            if (pDwmFlush) {
+                pDwmFlush();
+            }
+        }
+#endif // Q_OS_WINDOWS
 
         // mark the current swapchain buffer as unused from our side
         frame.imageAcquired = false;

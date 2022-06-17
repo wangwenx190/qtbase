@@ -65,9 +65,11 @@ private:
 
 QDirect3D9Handle::QDirect3D9Handle()
 {
-#ifndef QT_NO_OPENGL
-    m_direct3D9 = Direct3DCreate9(D3D_SDK_VERSION);
-#endif
+    static const auto pDirect3DCreate9 =
+        reinterpret_cast<decltype(&::Direct3DCreate9)>(
+            QApiCache::instance().get(QApiCache::SD_D3D9, "Direct3DCreate9"_L1));
+    if (pDirect3DCreate9)
+        m_direct3D9 = pDirect3DCreate9(D3D_SDK_VERSION);
 }
 
 QDirect3D9Handle::~QDirect3D9Handle()

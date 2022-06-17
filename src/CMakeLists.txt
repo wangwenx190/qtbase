@@ -1,6 +1,8 @@
 # Copyright (C) 2022 The Qt Company Ltd.
 # SPDX-License-Identifier: BSD-3-Clause
 
+add_subdirectory(tools/syncqt)
+
 # We need to include the features of a few modules before they are actually declared.
 # The feature values are used as conditions for deciding whether bundled 3rd party libraries
 # should be built.
@@ -13,7 +15,22 @@ if(QT_FEATURE_gui)
     qt_feature_evaluate_features("${CMAKE_CURRENT_SOURCE_DIR}/gui/configure.cmake")
 endif()
 
-add_subdirectory(tools/syncqt)
+# These 3rd party libraries need to be built before corelib and tools, because they
+# does qt_find_package for them.
+if(QT_FEATURE_regularexpression AND NOT QT_FEATURE_system_pcre2)
+    add_subdirectory(3rdparty/pcre2)
+endif()
+qt_install_3rdparty_library_wrap_config_extra_file(BundledPcre2)
+
+if(NOT QT_FEATURE_system_zlib)
+    add_subdirectory(3rdparty/zlib)
+endif()
+qt_install_3rdparty_library_wrap_config_extra_file(BundledZLIB)
+
+if(NOT QT_FEATURE_system_zstd)
+    add_subdirectory(3rdparty/zstd)
+endif()
+qt_install_3rdparty_library_wrap_config_extra_file(BundledZSTD)
 
 function(find_or_build_bootstrap_names)
     if (QT_WILL_BUILD_TOOLS)
@@ -29,18 +46,6 @@ endfunction()
 find_or_build_bootstrap_names()
 
 add_subdirectory(entrypoint)
-
-# These 3rd party libraries need to be built before corelib, because corelib
-# does qt_find_package for them.
-if(QT_FEATURE_regularexpression AND NOT QT_FEATURE_system_pcre2)
-    add_subdirectory(3rdparty/pcre2)
-endif()
-qt_install_3rdparty_library_wrap_config_extra_file(BundledPcre2)
-
-if(NOT QT_FEATURE_system_zlib)
-    add_subdirectory(3rdparty/zlib)
-endif()
-qt_install_3rdparty_library_wrap_config_extra_file(BundledZLIB)
 
 add_subdirectory(corelib)
 

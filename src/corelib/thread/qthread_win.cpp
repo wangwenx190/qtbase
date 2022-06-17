@@ -7,6 +7,7 @@
 #include "qcoreapplication.h"
 #include <private/qcoreapplication_p.h>
 #include <private/qeventdispatcher_win_p.h>
+#include <private/qsystemlibrary_p.h>
 #include "qloggingcategory.h"
 #include "qmutex.h"
 #include "qthreadstorage.h"
@@ -42,6 +43,8 @@ typedef struct _THREAD_POWER_THROTTLING_STATE {
 
 
 QT_BEGIN_NAMESPACE
+
+using namespace Qt::StringLiterals;
 
 Q_STATIC_LOGGING_CATEGORY(lcQThread, "qt.core.thread", QtWarningMsg)
 
@@ -166,21 +169,11 @@ unsigned int __stdcall QT_ENSURE_STACK_ALIGNED_FOR_SSE QThreadPrivate::start(voi
     QString threadName = std::exchange(thr->d_func()->objectName, {});
     if (Q_LIKELY(threadName.isEmpty()))
         threadName = QString::fromUtf8(thr->metaObject()->className());
-#ifndef QT_WIN_SERVER_2016_COMPAT
-    SetThreadDescription(GetCurrentThread(), reinterpret_cast<const wchar_t *>(threadName.utf16()));
-#else
-    HMODULE kernelbase = GetModuleHandleW(L"kernelbase.dll");
-    if (kernelbase != NULL) {
-        typedef HRESULT (WINAPI *DESCFUNC)(HANDLE, PCWSTR);
-
-        DESCFUNC setThreadDescription =
-            (DESCFUNC)GetProcAddress(kernelbase, "SetThreadDescription");
-        if (setThreadDescription != NULL) {
-            setThreadDescription(GetCurrentThread(),
-                                 reinterpret_cast<const wchar_t *>(threadName.utf16()));
-        }
-    }
-#endif
+    static const auto pSetThreadDescription =
+        reinterpret_cast<decltype(&::SetThreadDescription)>(
+            QApiCache::instance().get(QApiCache::SD_Kernel32, "SetThreadDescription"_L1));
+    if (pSetThreadDescription)
+        pSetThreadDescription(GetCurrentThread(), reinterpret_cast<const wchar_t *>(threadName.utf16()));
 
     emit thr->started(QThread::QPrivateSignal());
     QThread::setTerminationEnabled(true);
@@ -197,6 +190,13 @@ void QThreadPrivate::setQualityOfServiceLevel(QThread::QualityOfService qosLevel
 
 #if (_WIN32_WINNT >= _WIN32_WINNT_WIN10_RS3)
     qCDebug(lcQThread) << "Setting thread QoS class to" << qosLevel << "for thread" << q;
+    static const auto pSetThreadInformation =
+        reinterpret_cast<decltype(&::SetThreadInformation)>(
+            QApiCache::instance().get(QApiCache::SD_Kernel32, "SetThreadInformation"_L1));
+    if (!pSetThreadInformation) {
+        qCWarning(lcQThread) << "\"SetThreadInformation\" is not available on current platform.";
+        return;
+    }
 
     THREAD_POWER_THROTTLING_STATE state;
     memset(&state, 0, sizeof(state));
@@ -216,8 +216,8 @@ void QThreadPrivate::setQualityOfServiceLevel(QThread::QualityOfService qosLevel
         state.StateMask = 0; // Ask to disable throttling
         break;
     }
-    if (!SetThreadInformation(::GetCurrentThread(), THREAD_INFORMATION_CLASS::ThreadPowerThrottling,
-                              &state, sizeof(state))) {
+    if (!pSetThreadInformation(::GetCurrentThread(), THREAD_INFORMATION_CLASS::ThreadPowerThrottling,
+                               &state, sizeof(state))) {
         qErrnoWarning("Failed to set thread power throttling state");
     }
 #endif

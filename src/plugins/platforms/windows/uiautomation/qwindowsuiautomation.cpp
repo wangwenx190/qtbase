@@ -6,7 +6,7 @@
 
 #include "qwindowsuiautomation.h"
 
-#ifndef Q_CC_MSVC
+#ifndef WWX190_YYTHUNKS_ENABLED
 
 template<typename T, typename... TArg>
 struct winapi_func
@@ -37,6 +37,17 @@ struct winapi_func
 };
 
 #define FN(fn) #fn,fn
+
+// This API was introduced in Windows 10 version 1709 so we always load it dynamically.
+HRESULT WINAPI UiaRaiseNotificationEvent(
+    IRawElementProviderSimple *pProvider, NotificationKind notificationKind,
+    NotificationProcessing notificationProcessing, BSTR displayString, BSTR activityId)
+{
+    static auto func = winapi_func("uiautomationcore", FN(UiaRaiseNotificationEvent));
+    return func.invoke(pProvider, notificationKind, notificationProcessing, displayString, activityId);
+}
+
+#ifndef Q_CC_MSVC
 
 BOOL WINAPI UiaClientsAreListening()
 {
@@ -70,14 +81,8 @@ HRESULT WINAPI UiaRaiseAutomationEvent(IRawElementProviderSimple *pProvider, EVE
     return func.invoke(pProvider, id);
 }
 
-HRESULT WINAPI UiaRaiseNotificationEvent(
-    IRawElementProviderSimple *pProvider, NotificationKind notificationKind,
-    NotificationProcessing notificationProcessing, BSTR displayString, BSTR activityId)
-{
-    static auto func = winapi_func("uiautomationcore", FN(UiaRaiseNotificationEvent));
-    return func.invoke(pProvider, notificationKind, notificationProcessing, displayString, activityId);
-}
-
 #endif // !Q_CC_MSVC
+
+#endif // WWX190_YYTHUNKS_ENABLED
 
 #endif // QT_CONFIG(accessibility)
