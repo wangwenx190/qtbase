@@ -157,26 +157,14 @@ qt_internal_extend_target(Network CONDITION QT_FEATURE_brotli AND QT_FEATURE_htt
         WrapBrotli::WrapBrotliDec
 )
 
-qt_internal_extend_target(Network CONDITION QT_FEATURE_http AND QT_FEATURE_zstd
-    LIBRARIES
-        WrapZSTD::WrapZSTD
-)
-
 qt_internal_extend_target(Network CONDITION QT_FEATURE_system_zlib
     LIBRARIES
         WrapZLIB::WrapZLIB
 )
 
 qt_internal_extend_target(Network CONDITION NOT QT_FEATURE_system_zlib
-    INCLUDE_DIRECTORIES
-        ../3rdparty/zlib/src
-    ATTRIBUTION_FILE_DIR_PATHS
-        ../3rdparty/zlib
-)
-
-qt_internal_extend_target(Network CONDITION NOT QT_FEATURE_system_zlib
     LIBRARIES
-        Qt::Core
+        Qt::ZlibPrivate
 )
 
 qt_internal_extend_target(Network CONDITION QT_FEATURE_topleveldomain

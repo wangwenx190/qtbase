@@ -94,6 +94,7 @@ qt_internal_add_resource(QWindowsIntegrationPlugin "openglblacklists"
 qt_internal_extend_target(QWindowsIntegrationPlugin CONDITION QT_FEATURE_opengl
     SOURCES
         qwindowsglcontext.cpp qwindowsglcontext.h
+        qwindowseglcontext.cpp qwindowseglcontext.h
         qwindowsopenglcontext.h
     LIBRARIES
         Qt::OpenGLPrivate

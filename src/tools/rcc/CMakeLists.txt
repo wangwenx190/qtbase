@@ -27,8 +27,3 @@ qt_internal_return_unless_building_tools()
 
 ## Scopes:
 #####################################################################
-
-qt_internal_extend_target(${target_name} CONDITION QT_FEATURE_zstd
-    LIBRARIES
-        WrapZSTD::WrapZSTD
-)

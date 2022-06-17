@@ -361,10 +361,6 @@ function(qt6_add_binary_resources target )
     set(rcc_options ${_RCC_OPTIONS})
     set(rcc_destination ${_RCC_DESTINATION})
 
-    if(NOT QT_FEATURE_zstd)
-        list(APPEND rcc_options "--no-zstd")
-    endif()
-
     if(NOT rcc_destination)
         set(rcc_destination ${CMAKE_CURRENT_BINARY_DIR}/${target}.rcc)
     endif()
@@ -462,10 +458,6 @@ function(qt6_add_resources outfiles )
             message(WARNING "Use qt6_add_binary_resources for binary option")
         endif()
 
-        if(NOT QT_FEATURE_zstd)
-            list(APPEND rcc_options "--no-zstd")
-        endif()
-
         foreach(it ${rcc_files})
             get_filename_component(outfilename ${it} NAME_WE)
             get_filename_component(infile ${it} ABSOLUTE)
@@ -540,10 +532,6 @@ function(qt6_add_big_resources outfiles )
 
     if("${rcc_options}" MATCHES "-binary")
         message(WARNING "Use qt6_add_binary_resources for binary option")
-    endif()
-
-    if(NOT QT_FEATURE_zstd)
-        list(APPEND rcc_options "--no-zstd")
     endif()
 
     foreach(it ${rcc_files})
@@ -696,21 +684,6 @@ function(qt6_add_executable target)
     _qt_internal_finalize_target_defer("${target}")
 endfunction()
 
-# Just like for qt_add_resources, we should disable zstd compression when cross-compiling to a
-# target that doesn't support zstd decompression, even if the host tool supports it.
-# Allow an opt out via a QT_NO_AUTORCC_ZSTD variable.
-function(_qt_internal_disable_autorcc_zstd_when_not_supported target)
-    if(TARGET "${target}"
-            AND DEFINED QT_FEATURE_zstd
-            AND NOT QT_FEATURE_zstd
-            AND NOT QT_NO_AUTORCC_ZSTD)
-        get_target_property(target_type ${target} TYPE)
-        if(NOT target_type STREQUAL "INTERFACE_LIBRARY")
-            set_property(TARGET "${target}" APPEND PROPERTY AUTORCC_OPTIONS "--no-zstd")
-        endif()
-    endif()
-endfunction()
-
 # Link given target to PlatformExampleInternal when the target is part of an example build.
 function(_qt_internal_link_to_platform_example_internal target)
     # The first variable is set when examples are built using ExternalProject_Add.
@@ -767,7 +740,6 @@ function(_qt_internal_create_executable target)
         cmake_policy(POP)
     endif()
 
-    _qt_internal_disable_autorcc_zstd_when_not_supported("${target}")
     _qt_internal_link_to_platform_example_internal("${target}")
     _qt_internal_setup_warnings_are_errors_for_example_target("${target}")
     _qt_internal_set_up_static_runtime_library("${target}")
@@ -2551,16 +2523,6 @@ function(_qt_internal_process_resource target resourceName)
         list(APPEND rccArgsAllPasses ${rcc_OPTIONS})
     endif()
 
-    # When cross-building, we use host tools to generate target code. If the host rcc was compiled
-    # with zstd support, it expects the target QtCore to be able to decompress zstd compressed
-    # content. This might be true with qmake where host tools are built as part of the
-    # cross-compiled Qt, but with CMake we build tools separate from the cross-compiled Qt.
-    # If the target does not support zstd (feature is disabled), tell rcc not to generate
-    # zstd related code.
-    if(NOT QT_FEATURE_zstd)
-        list(APPEND rccArgsAllPasses "--no-zstd")
-    endif()
-
     # Disable AUTOGEN on the generated .qrc file.
     set(scope_args "")
     if(CMAKE_VERSION VERSION_GREATER_EQUAL "3.18")
@@ -2942,7 +2904,6 @@ function(_qt_internal_add_library target)
     add_library(${target} ${type_to_create} ${arg_UNPARSED_ARGUMENTS})
     cmake_policy(POP)
 
-    _qt_internal_disable_autorcc_zstd_when_not_supported("${target}")
     _qt_internal_link_to_platform_example_internal("${target}")
     _qt_internal_setup_warnings_are_errors_for_example_target("${target}")
     _qt_internal_set_up_static_runtime_library(${target})

@@ -198,7 +198,7 @@ public:
         BlockedByModal = 0x100,
         SizeGripOperation = 0x200,
         FrameStrutEventsEnabled = 0x400,
-        SynchronousGeometryChangeEvent = 0x800,
+        //SynchronousGeometryChangeEvent = 0x800,
         WithinSetStyle = 0x1000,
         WithinDestroy = 0x2000,
         TouchRegistered = 0x4000,

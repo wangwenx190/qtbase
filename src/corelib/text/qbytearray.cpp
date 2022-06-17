@@ -27,7 +27,9 @@
 #include <zconf.h>
 #include <zlib.h>
 #include <qxpfunctional.h>
-#endif
+#include <zstd.h>
+#include <LzmaLib.h>
+#endif // QT_NO_COMPRESS
 #include <ctype.h>
 #include <limits.h>
 #include <string.h>
@@ -529,13 +531,16 @@ quint16 qChecksum(QByteArrayView data, Qt::ChecksumType standard)
     in a new byte array.
 
     The \a compressionLevel parameter specifies how much compression
-    should be used. Valid values are between 0 and 9, with 9
-    corresponding to the greatest compression (i.e. smaller compressed
-    data) at the cost of using a slower algorithm. Smaller values (8,
-    7, ..., 1) provide successively less compression at slightly
+    should be used. When compressing with zlib, valid values are between
+    0 and 9, with 9 corresponding to the greatest compression (i.e. smaller
+    compressed data) at the cost of using a slower algorithm. Smaller
+    values (8, 7, ..., 1) provide successively less compression at slightly
     faster speeds. The value 0 corresponds to no compression at all.
-    The default value is -1, which specifies zlib's default
-    compression.
+    When compressing with zstd, valid values are between 0 and 22.
+    When compressing with lzma, valid values are also between 0 and 9, but
+    0 does not mean no compression.
+    The default value is -1, which specifies the default compression, it's
+    usually 6 for zlib, 14 for zstd and 5 for lzma.
 
     \sa qUncompress(const QByteArray &data)
 */
@@ -692,7 +697,7 @@ static QByteArray xxflate(ZLibOp op, QArrayDataPointer<char> out, QByteArrayView
     }
 }
 
-QByteArray qCompress(const uchar* data, qsizetype nbytes, int compressionLevel)
+Q_CORE_EXPORT QByteArray qCompressZlib(const uchar* data, qsizetype nbytes, int compressionLevel)
 {
     constexpr qsizetype HeaderSize = sizeof(CompressSizeHint_t);
     if (nbytes == 0) {
@@ -742,7 +747,89 @@ QByteArray qCompress(const uchar* data, qsizetype nbytes, int compressionLevel)
                    },
                    [] (z_stream *zs) { deflateEnd(zs); });
 }
-#endif
+
+Q_CORE_EXPORT QByteArray qCompressZstd(const uchar* data, qsizetype nbytes, int compressionLevel)
+{
+    if (nbytes == 0)
+        return {};
+    if (!data) {
+        qWarning() << "qCompress: data is null.";
+        return {};
+    }
+    if (nbytes < 0) {
+        qWarning() << "qCompress: input length is negative.";
+        return {};
+    }
+    if (nbytes > ZSTD_MAX_INPUT_SIZE) {
+        qWarning() << "qCompress: input length is too large.";
+        return {};
+    }
+    if (compressionLevel < -1 || compressionLevel > ZSTD_maxCLevel())
+        compressionLevel = -1;
+    if (compressionLevel < 0)
+        compressionLevel = 14; // Taken from rcc.cpp
+    std::size_t compressSize = ZSTD_COMPRESSBOUND(nbytes);
+    QByteArray compressed(static_cast<qsizetype>(compressSize), Qt::Uninitialized);
+    compressSize = ZSTD_compress(compressed.data(), compressSize, data, static_cast<std::size_t>(nbytes), compressionLevel);
+    if (ZSTD_isError(compressSize)) {
+        qWarning() << "qCompress: zstd compression failed:" << ZSTD_getErrorName(compressSize);
+        return {};
+    }
+    compressed.truncate(static_cast<qsizetype>(compressSize));
+    return compressed;
+}
+
+Q_CORE_EXPORT QByteArray qCompressLzma(const uchar* data, qsizetype nbytes, int compressionLevel)
+{
+    if (nbytes == 0)
+        return {};
+    if (!data) {
+        qWarning() << "qCompress: data is null.";
+        return {};
+    }
+    if (nbytes < 0) {
+        qWarning() << "qCompress: input length is negative.";
+        return {};
+    }
+    if (nbytes > std::numeric_limits<quint32>::max()) {
+        qWarning() << "qCompress: input length is too large.";
+        return {};
+    }
+    if (compressionLevel < -1 || compressionLevel > 9)
+        compressionLevel = -1;
+    if (compressionLevel < 0)
+        compressionLevel = 5;
+    uchar props[LZMA_PROPS_SIZE]{};
+    std::size_t propsSize = LZMA_PROPS_SIZE;
+    // Sadly we have no way to guess or calculate the possible compressed size in a reliable way.
+    auto compressSize = static_cast<std::size_t>(nbytes * 2);
+    QByteArray compressed(static_cast<qsizetype>(compressSize), Qt::Uninitialized);
+    const int result = LzmaCompress(reinterpret_cast<uchar*>(compressed.data()), &compressSize, data,
+                                    static_cast<std::size_t>(nbytes), props, &propsSize, compressionLevel,
+                                    0, -1, -1, -1, -1, -1);
+    if (result != SZ_OK) {
+        qWarning() << "qCompress: lzma compression failed.";
+        return {};
+    }
+    Q_ASSERT(propsSize == LZMA_PROPS_SIZE);
+    constexpr const qsizetype dataSizeByteSize = sizeof(quint64);
+    uchar dataSizeBytes[dataSizeByteSize]{};
+    qToLittleEndian(static_cast<quint64>(nbytes), &dataSizeBytes);
+    compressed.prepend(reinterpret_cast<const char*>(&dataSizeBytes), dataSizeByteSize);
+    compressed.prepend(reinterpret_cast<const char*>(&props), LZMA_PROPS_SIZE);
+    constexpr const qsizetype kHeaderSize = LZMA_PROPS_SIZE + dataSizeByteSize;
+    static_assert(kHeaderSize == 13, "LZMA header size must always be exactly 13!");
+    compressed.truncate(static_cast<qsizetype>(compressSize) + kHeaderSize);
+    return compressed;
+}
+
+QByteArray qCompress(const uchar* data, qsizetype nbytes, int compressionLevel)
+{
+    // qCompress() is meant to be used in cases where the data is small but compression
+    // happens quite frequently, so zstd is the most suitable algorithm.
+    return qCompressZstd(data, nbytes, compressionLevel);
+}
+#endif // QT_NO_COMPRESS
 
 /*!
     \fn QByteArray qUncompress(const QByteArray &data)
@@ -784,7 +871,7 @@ QByteArray qCompress(const uchar* data, qsizetype nbytes, int compressionLevel)
     Uncompresses the first \a nbytes of \a data and returns a new byte
     array with the uncompressed data.
 */
-QByteArray qUncompress(const uchar* data, qsizetype nbytes)
+Q_CORE_EXPORT QByteArray qUncompressZlib(const uchar* data, qsizetype nbytes)
 {
     if (!data)
         return dataIsNull(ZLibOp::Decompression);
@@ -820,7 +907,78 @@ QByteArray qUncompress(const uchar* data, qsizetype nbytes)
                    [] (z_stream *zs, size_t) { return inflate(zs, Z_NO_FLUSH); },
                    [] (z_stream *zs) { inflateEnd(zs); });
 }
-#endif
+
+Q_CORE_EXPORT QByteArray qUncompressZstd(const uchar* data, qsizetype nbytes)
+{
+    if (nbytes == 0)
+        return {};
+    if (!data) {
+        qWarning() << "qUncompress: data is null.";
+        return {};
+    }
+    if (nbytes < 0) {
+        qWarning() << "qUncompress: input length is negative.";
+        return {};
+    }
+    if (nbytes > ZSTD_MAX_INPUT_SIZE) {
+        qWarning() << "qUncompress: input length is too large.";
+        return {};
+    }
+    std::size_t decompressSize{ ZSTD_getFrameContentSize(data, nbytes) };
+    if (decompressSize == ZSTD_CONTENTSIZE_UNKNOWN || decompressSize == ZSTD_CONTENTSIZE_ERROR) {
+        qWarning() << "qUncompress: failed to extract content size.";
+        return {};
+    }
+    QByteArray uncompressed(static_cast<qsizetype>(decompressSize), Qt::Uninitialized);
+    decompressSize = ZSTD_decompress(uncompressed.data(), decompressSize, data, static_cast<std::size_t>(nbytes));
+    if (ZSTD_isError(decompressSize)) {
+        qWarning() << "qUncompress: zstd decompression failed:" << ZSTD_getErrorName(decompressSize);
+        return {};
+    }
+    uncompressed.truncate(static_cast<qsizetype>(decompressSize));
+    return uncompressed;
+}
+
+Q_CORE_EXPORT QByteArray qUncompressLzma(const uchar* data, qsizetype nbytes)
+{
+    if (nbytes == 0)
+        return {};
+    if (!data) {
+        qWarning() << "qUncompress: data is null.";
+        return {};
+    }
+    if (nbytes < 0) {
+        qWarning() << "qUncompress: input length is negative.";
+        return {};
+    }
+    if (nbytes > std::numeric_limits<quint32>::max()) {
+        qWarning() << "qUncompress: input length is too large.";
+        return {};
+    }
+    constexpr const qsizetype kHeaderSize = LZMA_PROPS_SIZE + sizeof(quint64);
+    static_assert(kHeaderSize == 13, "LZMA header size must always be exactly 13!");
+    if (nbytes < kHeaderSize) {
+        qWarning() << "qUncompress: input length is invalid.";
+        return {};
+    }
+    auto lzmaDataSize = static_cast<std::size_t>(nbytes - kHeaderSize);
+    auto decompressSize = static_cast<std::size_t>(qFromLittleEndian<quint64>(data + LZMA_PROPS_SIZE));
+    QByteArray uncompressed(static_cast<qsizetype>(decompressSize), Qt::Uninitialized);
+    const int result = LzmaUncompress(reinterpret_cast<uchar*>(uncompressed.data()), &decompressSize, data + kHeaderSize, &lzmaDataSize, data, LZMA_PROPS_SIZE);
+    if (result != SZ_OK) {
+        qWarning() << "qUncompress: lzma decompression failed.";
+        return {};
+    }
+    uncompressed.truncate(static_cast<qsizetype>(decompressSize));
+    return uncompressed;
+}
+
+QByteArray qUncompress(const uchar* data, qsizetype nbytes)
+{
+    // Our qCompress() produces zstd data, so we must use zstd to decompress.
+    return qUncompressZstd(data, nbytes);
+}
+#endif // QT_NO_COMPRESS
 
 /*!
     \class QByteArray

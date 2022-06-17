@@ -880,15 +880,8 @@ qt_internal_extend_target(Gui CONDITION QT_FEATURE_system_zlib
 )
 
 qt_internal_extend_target(Gui CONDITION NOT QT_FEATURE_system_zlib
-    INCLUDE_DIRECTORIES
-        ../3rdparty/zlib/src
-    ATTRIBUTION_FILE_DIR_PATHS
-        ../3rdparty/zlib
-)
-
-qt_internal_extend_target(Gui CONDITION NOT QT_FEATURE_system_zlib
     LIBRARIES
-        Qt::Core
+        Qt::ZlibPrivate
 )
 
 qt_internal_extend_target(Gui CONDITION QT_FEATURE_undocommand

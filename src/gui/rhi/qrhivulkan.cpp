@@ -2356,9 +2356,11 @@ bool QRhiVulkan::recreateSwapChain(QRhiSwapChain *swapChain)
     // with VK_ERROR_NATIVE_WINDOW_IN_USE_KHR if the old swapchain is provided)
     const bool reuseExisting = swapChainD->sc && swapChainD->lastConnectedSurface == swapChainD->surface;
 
+#if 0 // Maybe useful but add too much noise.
     qCDebug(QRHI_LOG_INFO, "Creating %s swapchain of %u buffers, size %dx%d, presentation mode %d",
             reuseExisting ? "recycled" : "new",
             reqBufferCount, swapChainD->pixelSize.width(), swapChainD->pixelSize.height(), presentMode);
+#endif
 
     VkSwapchainCreateInfoKHR swapChainInfo = {};
     swapChainInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;

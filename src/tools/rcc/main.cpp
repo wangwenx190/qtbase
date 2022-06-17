@@ -34,9 +34,7 @@ void dumpRecursive(const QDir &dir, QTextStream &out)
         if (entry.isDir()) {
             dumpRecursive(entry.filePath(), out);
         } else {
-            out << "<file>"_L1
-                << entry.filePath()
-                << "</file>\n"_L1;
+            out << "    <file>"_L1 << entry.filePath() << "</file>\n"_L1;
         }
     }
 }
@@ -64,7 +62,8 @@ int createProject(const QString &outFileName)
     }
 
     QTextStream out(&file);
-    out << "<!DOCTYPE RCC><RCC version=\"1.0\">\n"
+    out << "<!DOCTYPE RCC>\n"
+           "<RCC version=\"1.0\">\n"
            "<qresource>\n"_L1;
 
     // use "." as dir to get relative file paths
@@ -136,29 +135,16 @@ int runRcc(int argc, char *argv[])
     QCommandLineOption rootOption(QStringLiteral("root"), QStringLiteral("Prefix resource access path with root path."), QStringLiteral("path"));
     parser.addOption(rootOption);
 
-#if QT_CONFIG(zstd) && !defined(QT_NO_COMPRESS)
-#  define ALGOS     "[zstd], zlib, none"
-#elif QT_CONFIG(zstd)
-#  define ALGOS     "[zstd], none"
-#elif !defined(QT_NO_COMPRESS)
-#  define ALGOS     "[zlib], none"
-#else
-#  define ALGOS     "[none]"
-#endif
     const QString &algoDescription =
-            QStringLiteral("Compress input files using algorithm <algo> (" ALGOS ").");
+            QStringLiteral("Compress input files using algorithm <algo> ([lzma], zstd, zlib, none).");
     QCommandLineOption compressionAlgoOption(QStringLiteral("compress-algo"), algoDescription, QStringLiteral("algo"));
     parser.addOption(compressionAlgoOption);
-#undef ALGOS
 
     QCommandLineOption compressOption(QStringLiteral("compress"), QStringLiteral("Compress input files by <level>."), QStringLiteral("level"));
     parser.addOption(compressOption);
 
     QCommandLineOption nocompressOption(QStringLiteral("no-compress"), QStringLiteral("Disable all compression. Same as --compress-algo=none."));
     parser.addOption(nocompressOption);
-
-    QCommandLineOption noZstdOption(QStringLiteral("no-zstd"), QStringLiteral("Disable usage of zstd compression."));
-    parser.addOption(noZstdOption);
 
     QCommandLineOption thresholdOption(QStringLiteral("threshold"), QStringLiteral("Threshold to consider compressing files."), QStringLiteral("level"));
     parser.addOption(thresholdOption);
@@ -227,14 +213,6 @@ int runRcc(int argc, char *argv[])
 
     if (parser.isSet(compressionAlgoOption))
         library.setCompressionAlgorithm(RCCResourceLibrary::parseCompressionAlgorithm(parser.value(compressionAlgoOption), &errorMsg));
-    if (parser.isSet(noZstdOption))
-        library.setNoZstd(true);
-    if (library.compressionAlgorithm() == RCCResourceLibrary::CompressionAlgorithm::Zstd) {
-        if (formatVersion < 3)
-            errorMsg = "Zstandard compression requires format version 3 or higher"_L1;
-        if (library.noZstd())
-            errorMsg = "--compression-algo=zstd and --no-zstd both specified."_L1;
-    }
     if (parser.isSet(nocompressOption))
         library.setCompressionAlgorithm(RCCResourceLibrary::CompressionAlgorithm::None);
     if (parser.isSet(compressOption) && errorMsg.isEmpty()) {

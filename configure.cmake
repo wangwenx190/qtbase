@@ -121,15 +121,6 @@ SSL_free(SSL_new(0));
 }
 ")
 
-qt_find_package(WrapZSTD 1.3 MODULE
-    PROVIDED_TARGETS
-        WrapZSTD::WrapZSTD
-        zstd::libzstd
-        zstd::libzstd_static
-        zstd::libzstd_shared
-    MODULE_NAME global
-    QMAKE_LIB zstd
-)
 qt_find_package(WrapDBus1 1.2 MODULE PROVIDED_TARGETS dbus-1 MODULE_NAME global QMAKE_LIB dbus)
 qt_find_package(Libudev MODULE
     PROVIDED_TARGETS PkgConfig::Libudev MODULE_NAME global QMAKE_LIB libudev)
@@ -1066,30 +1057,13 @@ qt_feature("system-zlib" PRIVATE SYSTEM_LIBRARY
     LABEL "Using system zlib"
     CONDITION WrapSystemZLIB_FOUND
 )
-qt_feature("zstd" PUBLIC
-    LABEL "Zstandard support"
-    CONDITION WrapZSTD_FOUND
-)
 qt_feature("stdlib-libcpp" PRIVATE
     LABEL "Using stdlib=libc++"
     AUTODETECT OFF
     CONDITION MINGW OR (LINUX AND NOT ANDROID)
 )
-# Check whether CMake was built with zstd support.
-# See https://gitlab.kitware.com/cmake/cmake/-/issues/21552
 if(NOT DEFINED CACHE{QT_CMAKE_ZSTD_SUPPORT})
-    set(QT_CMAKE_ZSTD_SUPPORT FALSE CACHE INTERNAL "")
-    if(CMAKE_VERSION VERSION_GREATER_EQUAL "3.18")
-        execute_process(COMMAND "${CMAKE_COMMAND}"
-            -P "${CMAKE_CURRENT_SOURCE_DIR}/config.tests/cmake_zstd/check_zstd.cmake"
-            WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/config.tests"
-            OUTPUT_QUIET ERROR_QUIET
-            RESULT_VARIABLE qt_check_zstd_exit_code)
-        if(qt_check_zstd_exit_code EQUAL 0)
-            set(QT_CMAKE_ZSTD_SUPPORT TRUE CACHE INTERNAL "")
-        endif()
-        unset(qt_check_zstd_exit_code)
-    endif()
+    set(QT_CMAKE_ZSTD_SUPPORT TRUE CACHE INTERNAL "")
 endif()
 qt_feature("thread" PUBLIC
     SECTION "Kernel"
@@ -1473,7 +1447,6 @@ qt_configure_add_summary_entry(ARGS "openssl-linked")
 qt_configure_add_summary_entry(ARGS "opensslv11")
 qt_configure_add_summary_entry(ARGS "opensslv30")
 qt_configure_add_summary_entry(ARGS "system-zlib")
-qt_configure_add_summary_entry(ARGS "zstd")
 qt_configure_add_summary_entry(ARGS "thread")
 qt_configure_add_summary_entry(ARGS "android_16kb_pages")
 

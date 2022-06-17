@@ -29,9 +29,8 @@
 #ifndef QT_NO_COMPRESS
 #  include <zconf.h>
 #  include <zlib.h>
-#endif
-#if QT_CONFIG(zstd)
 #  include <zstd.h>
+#  include <LzmaLib.h>
 #endif
 
 #if defined(Q_OS_UNIX) && !defined(Q_OS_INTEGRITY)
@@ -69,9 +68,8 @@ using namespace Qt::StringLiterals;
 
 #ifndef QT_NO_COMPRESS
 RCC_FEATURE_SYMBOL(Zlib)
-#endif
-#if QT_CONFIG(zstd)
 RCC_FEATURE_SYMBOL(Zstd)
+RCC_FEATURE_SYMBOL(Lzma)
 #endif
 
 #undef RCC_FEATURE_SYMBOL
@@ -114,7 +112,8 @@ public:
         // must match rcc.h
         Compressed = 0x01,
         Directory = 0x02,
-        CompressedZstd = 0x04
+        CompressedZstd = 0x04,
+        CompressedLzma = 0x08
     };
 
 private:
@@ -136,11 +135,13 @@ public:
     inline bool isContainer(int node) const { return flags(node) & Directory; }
     QResource::Compression compressionAlgo(int node)
     {
-        uint compressionFlags = flags(node) & (Compressed | CompressedZstd);
+        uint compressionFlags = flags(node) & (Compressed | CompressedZstd | CompressedLzma);
         if (compressionFlags == Compressed)
             return QResource::ZlibCompression;
         if (compressionFlags == CompressedZstd)
             return QResource::ZstdCompression;
+        if (compressionFlags == CompressedLzma)
+            return QResource::LzmaCompression;
         return QResource::NoCompression;
     }
     const uchar *data(int node, qint64 *size) const;
@@ -277,6 +278,7 @@ static inline ResourceList *resourceList()
     \value ZstdCompression  Contents are compressed using \l{Zstandard Site}{zstd}. To
                             decompress, use the \c{ZSTD_decompress} function from the zstd
                             library.
+    \value LzmaCompression  Contents are compressed using \l{https://7-zip.org/sdk.html}{LZMA}.
 
     \sa compressionAlgorithm()
 */
@@ -431,7 +433,7 @@ qint64 QResourcePrivate::uncompressedSize() const
     case QResource::NoCompression:
         return size;
 
-    case QResource::ZlibCompression:
+    case QResource::ZlibCompression: {
 #ifndef QT_NO_COMPRESS
         if (size_t(size) >= sizeof(quint32))
             return qFromBigEndian<quint32>(data);
@@ -440,16 +442,30 @@ qint64 QResourcePrivate::uncompressedSize() const
         Q_UNREACHABLE();
 #endif
         break;
+    }
 
     case QResource::ZstdCompression: {
-#if QT_CONFIG(zstd)
+#ifndef QT_NO_COMPRESS
         size_t n = ZSTD_getFrameContentSize(data, size);
         return ZSTD_isError(n) ? -1 : qint64(n);
 #else
         // This should not happen because we've refused to load such resource
         Q_ASSERT(!"QResource: Qt built without support for Zstd compression");
         Q_UNREACHABLE();
+        break;
 #endif
+    }
+
+    case QResource::LzmaCompression: {
+#ifndef QT_NO_COMPRESS
+        if (size >= 13)
+            return qFromLittleEndian<quint64>(data + LZMA_PROPS_SIZE);
+#else
+        // This should not happen because we've refused to load such resource
+        Q_ASSERT(!"QResource: Qt built without support for LZMA compression");
+        Q_UNREACHABLE();
+#endif
+        break;
     }
     }
     return -1;
@@ -458,7 +474,7 @@ qint64 QResourcePrivate::uncompressedSize() const
 qsizetype QResourcePrivate::decompress(char *buffer, qsizetype bufferSize) const
 {
     Q_ASSERT(data);
-#if defined(QT_NO_COMPRESS) && !QT_CONFIG(zstd)
+#if defined(QT_NO_COMPRESS)
     Q_UNUSED(buffer);
     Q_UNUSED(bufferSize);
 #endif
@@ -480,11 +496,12 @@ qsizetype QResourcePrivate::decompress(char *buffer, qsizetype bufferSize) const
         return len;
 #else
         Q_UNREACHABLE();
+        break;
 #endif
     }
 
     case QResource::ZstdCompression: {
-#if QT_CONFIG(zstd)
+#ifndef QT_NO_COMPRESS
         size_t usize = ZSTD_decompress(buffer, bufferSize, data, size);
         if (ZSTD_isError(usize)) {
             qWarning("QResource: error decompressing zstd content: %s", ZSTD_getErrorName(usize));
@@ -493,6 +510,24 @@ qsizetype QResourcePrivate::decompress(char *buffer, qsizetype bufferSize) const
         return usize;
 #else
         Q_UNREACHABLE();
+        break;
+#endif
+    }
+
+    case QResource::LzmaCompression: {
+#ifndef QT_NO_COMPRESS
+        auto len = static_cast<std::size_t>(bufferSize);
+        constexpr const qsizetype kHeaderSize = 13;
+        auto lzmaDataSize = static_cast<std::size_t>(size - kHeaderSize);
+        const int result = LzmaUncompress(reinterpret_cast<uchar*>(buffer), &len, data + kHeaderSize, &lzmaDataSize, data, LZMA_PROPS_SIZE);
+        if (result != SZ_OK) {
+            qWarning("QResource: error decompressing lzma content (%d)", result);
+            return -1;
+        }
+        return static_cast<qsizetype>(len);
+#else
+        Q_UNREACHABLE();
+        break;
 #endif
     }
     }
@@ -1125,12 +1160,11 @@ public:
             return false;
 
         // And some sanity checking for features
-        quint32 acceptableFlags = 0;
 #ifndef QT_NO_COMPRESS
-        acceptableFlags |= Compressed;
+        constexpr quint32 acceptableFlags = (Compressed | CompressedZstd | CompressedLzma);
+#else
+        constexpr quint32 acceptableFlags = 0;
 #endif
-        if (QT_CONFIG(zstd))
-            acceptableFlags |= CompressedZstd;
         if (file_flags & ~acceptableFlags)
             return false;
 

@@ -56,6 +56,7 @@ public:
     enum class CompressionAlgorithm {
         Zlib,
         Zstd,
+        Lzma,
 
         Best = 99,
         None = -1
@@ -81,9 +82,6 @@ public:
     QStringList failedResources() const { return m_failedResources; }
 
     int formatVersion() const { return m_formatVersion; }
-
-    void setNoZstd(bool v) { m_noZstd = v; }
-    bool noZstd() const { return m_noZstd; }
 
 private:
     struct Strings {
@@ -145,7 +143,6 @@ private:
     QIODevice *m_outDevice;
     QByteArray m_out;
     quint8 m_formatVersion;
-    bool m_noZstd;
 };
 
 QT_END_NAMESPACE

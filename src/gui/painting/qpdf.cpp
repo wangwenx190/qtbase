@@ -38,6 +38,10 @@ static const bool do_compress = false;
 static const bool do_compress = true;
 #endif
 
+#ifndef QT_NO_COMPRESS
+Q_CORE_EXPORT QByteArray qCompressZlib(const uchar* data, qsizetype nbytes, int compressionLevel = -1);
+#endif // QT_NO_COMPRESS
+
 // might be helpful for smooth transforms of images
 // Can't use it though, as gs generates completely wrong images if this is true.
 static const bool interpolateImages = false;
@@ -2575,7 +2579,7 @@ int QPdfEnginePrivate::writeCompressed(const char *src, int len)
 {
 #ifndef QT_NO_COMPRESS
     if (do_compress) {
-        const QByteArray data = qCompress(reinterpret_cast<const uchar *>(src), len);
+        const QByteArray data = qCompressZlib(reinterpret_cast<const uchar *>(src), len);
         constexpr qsizetype HeaderSize = 4;
         if (!data.isNull()) {
             stream->writeRawData(data.data() + HeaderSize, data.size() - HeaderSize);

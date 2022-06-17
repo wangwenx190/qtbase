@@ -9,13 +9,10 @@
 
 #include <limits>
 #include <zlib.h>
+#include <zstd.h>
 
 #if QT_CONFIG(brotli)
 #    include <brotli/decode.h>
-#endif
-
-#if QT_CONFIG(zstd)
-#    include <zstd.h>
 #endif
 
 #include <array>
@@ -32,9 +29,7 @@ struct ContentEncodingMapping
 };
 
 constexpr ContentEncodingMapping contentEncodingMapping[] {
-#if QT_CONFIG(zstd)
     { "zstd", QDecompressHelper::Zstandard },
-#endif
 #if QT_CONFIG(brotli)
     { "br", QDecompressHelper::Brotli },
 #endif
@@ -63,12 +58,10 @@ BrotliDecoderState *toBrotliPointer(void *ptr)
 }
 #endif
 
-#if QT_CONFIG(zstd)
 ZSTD_DStream *toZstandardPointer(void *ptr)
 {
     return static_cast<ZSTD_DStream *>(ptr);
 }
-#endif
 }
 
 bool QDecompressHelper::isSupportedEncoding(QByteArrayView encoding)
@@ -139,11 +132,7 @@ bool QDecompressHelper::setEncoding(ContentEncoding ce)
 #endif
         break;
     case Zstandard:
-#if QT_CONFIG(zstd)
         decoderPointer = ZSTD_createDStream();
-#else
-        Q_UNREACHABLE();
-#endif
         break;
     }
     if (!decoderPointer) {
@@ -545,11 +534,9 @@ void QDecompressHelper::clear()
         break;
     }
     case Zstandard: {
-#if QT_CONFIG(zstd)
         ZSTD_DStream *zstdStream = toZstandardPointer(decoderPointer);
         if (zstdStream)
             ZSTD_freeDStream(zstdStream);
-#endif
         break;
     }
     }
@@ -754,11 +741,6 @@ qsizetype QDecompressHelper::readBrotli(char *data, const qsizetype maxSize)
 
 qsizetype QDecompressHelper::readZstandard(char *data, const qsizetype maxSize)
 {
-#if !QT_CONFIG(zstd)
-    Q_UNUSED(data);
-    Q_UNUSED(maxSize);
-    Q_UNREACHABLE();
-#else
     ZSTD_DStream *zstdStream = toZstandardPointer(decoderPointer);
 
     QByteArrayView input = compressedDataBuffer.readPointer();
@@ -787,7 +769,6 @@ qsizetype QDecompressHelper::readZstandard(char *data, const qsizetype maxSize)
     }
     compressedDataBuffer.advanceReadPointer(inBuf.pos);
     return bytesDecoded;
-#endif
 }
 
 QT_END_NAMESPACE

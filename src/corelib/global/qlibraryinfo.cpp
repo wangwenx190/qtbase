@@ -305,8 +305,13 @@ static QString prefixFromQtCoreLibraryHelper(const QString &qtCoreLibraryPath)
 {
     const QString qtCoreLibrary = QDir::fromNativeSeparators(qtCoreLibraryPath);
     const QString libDir = QFileInfo(qtCoreLibrary).absolutePath();
-    const QString prefixDir = libDir + "/" QT_CONFIGURE_LIBLOCATION_TO_PREFIX_PATH;
-    return QDir::cleanPath(prefixDir);
+    return QDir::cleanPath([&libDir]() -> QString {
+        static const bool hack = qEnvironmentVariableIntValue("QT_FORCE_LOAD_PLUGINS_FROM_CORE_DIR");
+        if (hack) {
+            return libDir;
+        }
+        return libDir + "/"_L1 + QT_CONFIGURE_LIBLOCATION_TO_PREFIX_PATH;
+    }());
 }
 #endif
 

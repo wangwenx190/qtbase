@@ -299,6 +299,11 @@ if(MSVC)
     target_compile_definitions(PlatformCommonInternal INTERFACE
         "_CRT_SECURE_NO_WARNINGS"
         "$<$<STREQUAL:$<TARGET_PROPERTY:TYPE>,SHARED_LIBRARY>:_WINDLL>"
+        "_ENABLE_EXTENDED_ALIGNED_STORAGE"
+    )
+else()
+    target_compile_options(PlatformCommonInternal INTERFACE
+        $<$<NOT:$<CONFIG:Debug>>:-fconstexpr-depth=4096>
     )
 endif()
 
@@ -345,15 +350,18 @@ if (MSVC AND NOT CLANG)
     target_compile_options(PlatformCommonInternal INTERFACE
         -Zc:wchar_t
         -bigobj
+        -guard:cf-
+        -guard:ehcont-
     )
 
     target_compile_options(PlatformCommonInternal INTERFACE
-        $<$<NOT:$<CONFIG:Debug>>:-guard:cf -Gw>
+        $<$<NOT:$<CONFIG:Debug>>:-constexpr:depth4096 -Gw -Gy -jumptablerdata -Qfast_transcendentals -QIntel-jcc-erratum -Qpar>
     )
 
     qt_internal_platform_link_options(PlatformCommonInternal INTERFACE
-        -DYNAMICBASE -NXCOMPAT -LARGEADDRESSAWARE
-        $<$<NOT:$<CONFIG:Debug>>:-OPT:REF -OPT:ICF -GUARD:CF>
+        -DYNAMICBASE -FIXED:NO -NXCOMPAT -HIGHENTROPYVA -LARGEADDRESSAWARE
+        -CETCOMPAT:NO -GUARD:NO
+        $<$<NOT:$<CONFIG:Debug>>:-OPT:REF -OPT:ICF>
     )
 endif()
 
@@ -403,7 +411,7 @@ endif()
 
 # Hardening options
 
-qt_internal_apply_intel_cet_harderning(PlatformCommonInternal)
+#[[qt_internal_apply_intel_cet_harderning(PlatformCommonInternal)
 
 if(QT_FEATURE_glibc_fortify_source)
     set(is_optimized_build "$<OR:$<NOT:$<CONFIG:Debug>>,$<BOOL:${QT_FEATURE_optimize_debug}>>")
@@ -460,7 +468,7 @@ endif()
 
 if(QT_FEATURE_relro_now_linker)
     qt_internal_platform_link_options(PlatformCommonInternal INTERFACE "-Wl,-z,relro,-z,now")
-endif()
+endif()]]
 
 
 if(QT_FEATURE_force_asserts)
