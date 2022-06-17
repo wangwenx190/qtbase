@@ -1944,7 +1944,8 @@ public:
     Q_DECLARE_FLAGS(BeginFrameFlags, BeginFrameFlag)
 
     enum EndFrameFlag {
-        SkipPresent = 1 << 0
+        SkipPresent = 1 << 0,
+        RestartPresentQueue = 1 << 1,
     };
     Q_DECLARE_FLAGS(EndFrameFlags, EndFrameFlag)
 

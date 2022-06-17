@@ -34,9 +34,7 @@ void dumpRecursive(const QDir &dir, QTextStream &out)
         if (entry.isDir()) {
             dumpRecursive(entry.filePath(), out);
         } else {
-            out << "<file>"_L1
-                << entry.filePath()
-                << "</file>\n"_L1;
+            out << "    <file>"_L1 << entry.filePath() << "</file>\n"_L1;
         }
     }
 }
@@ -64,7 +62,8 @@ int createProject(const QString &outFileName)
     }
 
     QTextStream out(&file);
-    out << "<!DOCTYPE RCC><RCC version=\"1.0\">\n"
+    out << "<!DOCTYPE RCC>\n"
+           "<RCC version=\"1.0\">\n"
            "<qresource>\n"_L1;
 
     // use "." as dir to get relative file paths

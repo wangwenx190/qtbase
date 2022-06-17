@@ -56,6 +56,7 @@
 
 #if !defined(QT_NO_OPENGL)
 #  include "qwindowsglcontext.h"
+#  include "qwindowseglcontext.h"
 #endif
 
 #include "qwindowsopengltester.h"
@@ -360,6 +361,16 @@ QWindowsWindow *QWindowsIntegration::createPlatformWindowHelper(QWindow *window,
 
 QWindowsStaticOpenGLContext *QWindowsStaticOpenGLContext::doCreate()
 {
+    {
+        const bool forceAngle = qEnvironmentVariableIntValue("QT_OPENGL_FORCE_ANGLE");
+        if (forceAngle) {
+            qCDebug(lcQpaGl, "Qt OpenGL: user request to force use ANGLE.");
+            if (QWindowsEGLStaticContext *eglCtx = QWindowsEGLStaticContext::create())
+                return eglCtx;
+            else
+                qCWarning(lcQpaGl, "EGL/ANGLE failed to initialize. Fallback to use desktop OpenGL instead ...");
+        }
+    }
 #if defined(QT_OPENGL_DYNAMIC)
     QWindowsOpenGLTester::Renderer requestedRenderer = QWindowsOpenGLTester::requestedRenderer();
     switch (requestedRenderer) {

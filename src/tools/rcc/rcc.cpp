@@ -264,7 +264,7 @@ qint64 RCCFileInfo::writeDataBlob(RCCResourceLibrary &lib,
 #if QT_CONFIG(zstd)
     if (m_compressAlgo == RCCResourceLibrary::CompressionAlgorithm::Best && !m_noZstd) {
         m_compressAlgo = RCCResourceLibrary::CompressionAlgorithm::Zstd;
-        m_compressLevel = 19;   // not ZSTD_maxCLevel(), as 20+ are experimental
+        m_compressLevel = ZSTD_maxCLevel();
     }
 #endif
 #ifndef QT_NO_COMPRESS
@@ -1209,7 +1209,7 @@ bool RCCResourceLibrary::writeDataBlobs()
     Q_ASSERT(m_errorDevice);
     switch (m_format) {
     case C_Code:
-        writeString("static const unsigned char qt_resource_data[] = {\n");
+        writeString("static constexpr const unsigned char qt_resource_data[] = {\n");
         break;
     case Python_Code:
         writeString("qt_resource_data = b\"\\\n");
@@ -1255,7 +1255,7 @@ bool RCCResourceLibrary::writeDataBlobs()
     case Pass1:
         if (offset < 8)
             offset = 8;
-        writeString("\nstatic const unsigned char qt_resource_data[");
+        writeString("\nstatic constexpr const unsigned char qt_resource_data[");
         writeByteArray(QByteArray::number(offset));
         writeString("] = { 'Q', 'R', 'C', '_', 'D', 'A', 'T', 'A' };\n\n");
         break;
@@ -1270,7 +1270,7 @@ bool RCCResourceLibrary::writeDataNames()
     switch (m_format) {
     case C_Code:
     case Pass1:
-        writeString("static const unsigned char qt_resource_name[] = {\n");
+        writeString("static constexpr const unsigned char qt_resource_name[] = {\n");
         break;
     case Python_Code:
         writeString("qt_resource_name = b\"\\\n");
@@ -1332,7 +1332,7 @@ bool RCCResourceLibrary::writeDataStructure()
     switch (m_format) {
     case C_Code:
     case Pass1:
-        writeString("static const unsigned char qt_resource_struct[] = {\n");
+        writeString("static constexpr const unsigned char qt_resource_struct[] = {\n");
         break;
     case Python_Code:
         writeString("qt_resource_struct = b\"\\\n");

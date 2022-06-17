@@ -813,7 +813,6 @@ void WindowCreationData::fromWindow(const QWindow *w, const Qt::WindowFlags flag
         if ((type == Qt::Window || dialog || tool)) {
             const bool defaultTitlebar = !flags.testFlag(Qt::CustomizeWindowHint);
             if (!(flags & Qt::FramelessWindowHint)) {
-                style |= WS_POPUP;
                 if (flags & Qt::MSWindowsFixedSizeDialogHint) {
                     style |= WS_DLGFRAME;
                 } else {
@@ -2512,6 +2511,7 @@ bool QWindowsWindow::handleWmPaint(HWND hwnd, UINT message,
                                          WPARAM, LPARAM, LRESULT *result)
 {
     if (message == WM_ERASEBKGND) { // Backing store - ignored.
+        fireFullExpose();
         *result = 1;
         return true;
     }
