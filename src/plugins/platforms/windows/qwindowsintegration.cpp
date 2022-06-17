@@ -57,6 +57,7 @@
 
 #if !defined(QT_NO_OPENGL)
 #  include "qwindowsglcontext.h"
+#  include "qwindowseglcontext.h"
 #endif
 
 #include "qwindowsopengltester.h"
@@ -89,6 +90,7 @@ struct QWindowsIntegrationPrivate
     void parseOptions(QWindowsIntegration *q, const QStringList &paramList);
 
     unsigned m_options = 0;
+    QWindowsIntegration::AngleBackend m_angleBackend = QWindowsIntegration::AngleBackendDefault;
     QWindowsContext m_context;
     QPlatformFontDatabase *m_fontDatabase = nullptr;
 #if QT_CONFIG(clipboard)
@@ -137,7 +139,8 @@ using DarkModeHandling = QNativeInterface::Private::QWindowsApplication::DarkMod
 static inline unsigned parseOptions(const QStringList &paramList,
                                     int *tabletAbsoluteRange,
                                     QtWindows::DpiAwareness *dpiAwareness,
-                                    DarkModeHandling *darkModeHandling)
+                                    DarkModeHandling *darkModeHandling,
+                                    QWindowsIntegration::AngleBackend *angleBackend)
 {
     unsigned options = 0;
     for (const QString &param : paramList) {
@@ -159,6 +162,22 @@ static inline unsigned parseOptions(const QStringList &paramList,
             options |= QWindowsIntegration::DetectAltGrModifier;
         } else if (param == u"gl=gdi") {
             options |= QWindowsIntegration::DisableArb;
+        } else if (param.startsWith(u"angle=")) {
+            const QString backend = param.mid(6).toLower();
+            if (backend == u"d3d11")
+                *angleBackend = QWindowsIntegration::AngleBackendD3d11;
+            else if (backend == u"d3d9")
+                *angleBackend = QWindowsIntegration::AngleBackendD3d9;
+            else if (backend == u"warp")
+                *angleBackend = QWindowsIntegration::AngleBackendWarp;
+            else if (backend == u"d3d11on12")
+                *angleBackend = QWindowsIntegration::AngleBackendD3d11On12;
+            else if (backend == u"vulkan")
+                *angleBackend = QWindowsIntegration::AngleBackendVulkan;
+            else if (backend == u"swiftshader")
+                *angleBackend = QWindowsIntegration::AngleBackendSwiftShader;
+            else
+                qWarning() << "Invalid ANGLE backend:" << backend;
         } else if (param == u"nodirectwrite") {
             options |= QWindowsIntegration::DontUseDirectWriteFonts;
         } else if (param == u"nocolorfonts") {
@@ -201,7 +220,8 @@ void QWindowsIntegrationPrivate::parseOptions(QWindowsIntegration *q, const QStr
     int tabletAbsoluteRange = -1;
     DarkModeHandling darkModeHandling = DarkModeHandlingFlag::DarkModeWindowFrames
                                       | DarkModeHandlingFlag::DarkModeStyle;
-    m_options = ::parseOptions(paramList, &tabletAbsoluteRange, &dpiAwareness, &darkModeHandling);
+    m_options = ::parseOptions(paramList, &tabletAbsoluteRange, &dpiAwareness, &darkModeHandling,
+                               &m_angleBackend);
     q->setDarkModeHandling(darkModeHandling);
     QWindowsFontDatabase::setFontOptions(m_options);
     if (tabletAbsoluteRange >= 0)
@@ -376,6 +396,15 @@ QWindowsStaticOpenGLContext *QWindowsStaticOpenGLContext::doCreate()
         }
         qCWarning(lcQpaGl, "System OpenGL failed. Falling back to Software OpenGL.");
         return QOpenGLStaticContext::create(true);
+    // If ANGLE is requested, use it, don't try anything else.
+    case QWindowsOpenGLTester::AngleRendererD3d9:
+    case QWindowsOpenGLTester::AngleRendererD3d11:
+    case QWindowsOpenGLTester::AngleRendererD3d11Warp:
+    case QWindowsOpenGLTester::AngleRendererD3d11On12:
+    case QWindowsOpenGLTester::AngleRendererVulkan:
+    case QWindowsOpenGLTester::AngleRendererSwiftShader:
+    case QWindowsOpenGLTester::Gles:
+        return QWindowsEGLStaticContext::create(requestedRenderer);
     case QWindowsOpenGLTester::SoftwareRasterizer:
         if (QWindowsStaticOpenGLContext *swCtx = QOpenGLStaticContext::create(true))
             return swCtx;
@@ -401,7 +430,17 @@ QWindowsStaticOpenGLContext *QWindowsStaticOpenGLContext::doCreate()
             return glCtx;
         }
     }
+    if (QWindowsOpenGLTester::Renderers glesRenderers = supportedRenderers
+            & QWindowsOpenGLTester::GlesMask) {
+        if (QWindowsEGLStaticContext *eglCtx = QWindowsEGLStaticContext::create(glesRenderers))
+            return eglCtx;
+    }
     return QOpenGLStaticContext::create(true);
+#elif defined(QT_OPENGL_ES_2)
+    QWindowsOpenGLTester::Renderers glesRenderers = QWindowsOpenGLTester::requestedGlesRenderer();
+    if (glesRenderers == QWindowsOpenGLTester::InvalidRenderer)
+        glesRenderers = QWindowsOpenGLTester::supportedRenderers(QWindowsOpenGLTester::AngleRendererD3d11);
+    return QWindowsEGLStaticContext::create(glesRenderers);
 #else
     return QOpenGLStaticContext::create();
 #endif
@@ -568,6 +607,11 @@ QPlatformAccessibility *QWindowsIntegration::accessibility() const
 unsigned QWindowsIntegration::options() const
 {
     return d->m_options;
+}
+
+QWindowsIntegration::AngleBackend QWindowsIntegration::angleBackend() const
+{
+    return d->m_angleBackend;
 }
 
 #if QT_CONFIG(sessionmanager)

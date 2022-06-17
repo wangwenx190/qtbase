@@ -817,7 +817,6 @@ void WindowCreationData::fromWindow(const QWindow *w, const Qt::WindowFlags flag
     if (topLevel) {
         if ((type == Qt::Window || dialog || tool)) {
             if (!(flags & Qt::FramelessWindowHint)) {
-                style |= WS_POPUP;
                 if (flags & Qt::MSWindowsFixedSizeDialogHint) {
                     style |= WS_DLGFRAME;
                 } else {
@@ -854,8 +853,9 @@ void WindowCreationData::fromWindow(const QWindow *w, const Qt::WindowFlags flag
         if (flagsIn & Qt::WindowTransparentForInput)
             exStyle |= WS_EX_TRANSPARENT;
 
-        // Currently only compatible with D3D surfaces, use it with care.
-        if (qEnvironmentVariableIntValue("QT_QPA_DISABLE_REDIRECTION_SURFACE"))
+        // Direct3D windows provide their own swap chain/composition content and
+        // must not be backed by a DWM redirection surface.
+        if (w->surfaceType() == QSurface::Direct3DSurface)
             exStyle |= WS_EX_NOREDIRECTIONBITMAP;
     }
 }
@@ -1694,7 +1694,7 @@ void QWindowsWindow::fireExpose(const QRegion &region, bool force)
         clearFlag(Exposed);
     else
         setFlag(Exposed);
-    QWindowSystemInterface::handleExposeEvent(window(), region);
+    QWindowSystemInterface::handleExposeEvent<QWindowSystemInterface::SynchronousDelivery>(window(), region);
 }
 
 void QWindowsWindow::fireFullExpose(bool force)
@@ -2448,10 +2448,9 @@ void QWindowsWindow::handleGeometryChange()
     // customization frameworks.
     if (m_data.geometry == previousGeometry)
         return;
-    QWindowSystemInterface::handleGeometryChange(window(), m_data.geometry);
-    // QTBUG-32121: OpenGL/normal windows (with exception of ANGLE
-    // which we no longer support in Qt 6) do not receive expose
-    // events when shrinking, synthesize.
+    QWindowSystemInterface::handleGeometryChange<QWindowSystemInterface::SynchronousDelivery>(window(), m_data.geometry);
+    // QTBUG-32121: OpenGL/normal windows do not receive expose events when
+    // shrinking, synthesize.
     if (isExposed()
         && m_data.geometry.size() != previousGeometry.size() // Exclude plain move
         // One dimension grew -> Windows will send expose, no need to synthesize.
@@ -2459,17 +2458,11 @@ void QWindowsWindow::handleGeometryChange()
         fireFullExpose(true);
     }
 
-    const bool wasSync = testFlag(SynchronousGeometryChangeEvent);
     checkForScreenChanged();
-
-    if (testFlag(SynchronousGeometryChangeEvent))
-        QWindowSystemInterface::flushWindowSystemEvents(QEventLoop::ExcludeUserInputEvents);
 
     if (!testFlag(ResizeMoveActive))
         updateRestoreGeometry();
 
-    if (!wasSync)
-        clearFlag(SynchronousGeometryChangeEvent);
     qCDebug(lcQpaEvents) << __FUNCTION__ << this << window() << m_data.geometry;
 
     if (m_data.flags & Qt::ExpandedClientAreaHint) {
@@ -2564,6 +2557,7 @@ bool QWindowsWindow::handleWmPaint(HWND hwnd, UINT message,
                                          WPARAM, LPARAM, LRESULT *result)
 {
     if (message == WM_ERASEBKGND) { // Backing store - ignored.
+        fireFullExpose();
         *result = 1;
         return true;
     }
@@ -2586,8 +2580,6 @@ bool QWindowsWindow::handleWmPaint(HWND hwnd, UINT message,
     // we still need to send isExposed=true, for compatibility.
     // Our tests depend on it.
     fireExpose(QRegion(qrectFromRECT(ps.rcPaint)), true);
-    if (!QWindowsContext::instance()->asyncExpose())
-        QWindowSystemInterface::flushWindowSystemEvents(QEventLoop::ExcludeUserInputEvents);
 
     EndPaint(hwnd, &ps);
     return true;
@@ -2662,7 +2654,6 @@ void QWindowsWindow::handleWindowStateChange(Qt::WindowStates state)
     QWindowSystemInterface::handleWindowStateChanged(window(), state);
     if (state & Qt::WindowMinimized) {
         handleHidden();
-        QWindowSystemInterface::flushWindowSystemEvents(QEventLoop::ExcludeUserInputEvents); // Tell QQuickWindow to stop rendering now.
     } else {
         updateCustomTitlebar();
         if (state & Qt::WindowMaximized) {
@@ -2683,23 +2674,16 @@ void QWindowsWindow::handleWindowStateChange(Qt::WindowStates state)
         // QTBUG-17548: We send expose events when receiving WM_Paint, but for
         // layered windows and transient children, we won't receive any WM_Paint.
         QWindow *w = window();
-        bool exposeEventsSent = false;
-        if (isLayered()) {
+        if (isLayered())
             fireFullExpose();
-            exposeEventsSent = true;
-        }
         const QWindowList allWindows = QGuiApplication::allWindows();
         for (QWindow *child : allWindows) {
             if (child != w && child->isVisible() && child->transientParent() == w) {
                 QWindowsWindow *platformWindow = QWindowsWindow::windowsWindowOf(child);
-                if (platformWindow && platformWindow->isLayered()) {
+                if (platformWindow && platformWindow->isLayered())
                     platformWindow->fireFullExpose();
-                    exposeEventsSent = true;
-                }
             }
         }
-        if (exposeEventsSent && !QWindowsContext::instance()->asyncExpose())
-            QWindowSystemInterface::flushWindowSystemEvents(QEventLoop::ExcludeUserInputEvents);
     }
 }
 
@@ -2847,14 +2831,9 @@ void QWindowsWindow::setWindowState_sys(Qt::WindowStates newState)
                     setRestoreMaximizedFlag(m_data.hwnd, newState & Qt::WindowMaximized);
             } else {
                 const UINT swpf = SWP_FRAMECHANGED | SWP_NOACTIVATE;
-                const bool wasSync = testFlag(SynchronousGeometryChangeEvent);
-                setFlag(SynchronousGeometryChangeEvent);
                 SetWindowPos(m_data.hwnd, HWND_TOP, screenGeometry.left(), screenGeometry.top(), screenGeometry.width(), screenGeometry.height(), swpf);
-                if (!wasSync)
-                    clearFlag(SynchronousGeometryChangeEvent);
                 clearFlag(MaximizeToFullScreen);
-                QWindowSystemInterface::handleGeometryChange(window(), screenGeometry);
-                QWindowSystemInterface::flushWindowSystemEvents(QEventLoop::ExcludeUserInputEvents);
+                QWindowSystemInterface::handleGeometryChange<QWindowSystemInterface::SynchronousDelivery>(window(), screenGeometry);
             }
         } else {
             // Restore saved state.
@@ -2880,16 +2859,12 @@ void QWindowsWindow::setWindowState_sys(Qt::WindowStates newState)
                 UINT swpf = SWP_FRAMECHANGED | SWP_NOZORDER | SWP_NOACTIVATE;
                 if (!m_savedFrameGeometry.isValid())
                     swpf |= SWP_NOSIZE | SWP_NOMOVE;
-                const bool wasSync = testFlag(SynchronousGeometryChangeEvent);
-                setFlag(SynchronousGeometryChangeEvent);
                 // After maximized/fullscreen; the window can be in a maximized state. Clear
                 // it before applying the normal geometry.
                 if (windowVisibility_sys(m_data.hwnd) == QWindow::Maximized)
                     ShowWindow(m_data.hwnd, SW_SHOWNOACTIVATE);
                 SetWindowPos(m_data.hwnd, nullptr, m_savedFrameGeometry.x(), m_savedFrameGeometry.y(),
                              m_savedFrameGeometry.width(), m_savedFrameGeometry.height(), swpf);
-                if (!wasSync)
-                    clearFlag(SynchronousGeometryChangeEvent);
                 // preserve maximized state
                 if (visible) {
                     setFlag(WithinMaximize);

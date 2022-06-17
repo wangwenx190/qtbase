@@ -4,6 +4,7 @@
 
 #include "qwindowsopengltester.h"
 #include "qwindowscontext.h"
+#include "qwindowsintegration.h"
 
 #include <QtCore/qvariant.h>
 #include <QtCore/qmap.h>
@@ -197,25 +198,74 @@ QVariant GpuDescription::toVariant() const
     return result;
 }
 
+QWindowsOpenGLTester::Renderer QWindowsOpenGLTester::requestedGlesRenderer()
+{
+    const QWindowsIntegration *integration = QWindowsIntegration::instance();
+    if (integration) {
+        switch (integration->angleBackend()) {
+        case QWindowsIntegration::AngleBackendD3d11:
+            return QWindowsOpenGLTester::AngleRendererD3d11;
+        case QWindowsIntegration::AngleBackendD3d9:
+            return QWindowsOpenGLTester::AngleRendererD3d9;
+        case QWindowsIntegration::AngleBackendWarp:
+            return QWindowsOpenGLTester::AngleRendererD3d11Warp;
+        case QWindowsIntegration::AngleBackendD3d11On12:
+            return QWindowsOpenGLTester::AngleRendererD3d11On12;
+        case QWindowsIntegration::AngleBackendVulkan:
+            return QWindowsOpenGLTester::AngleRendererVulkan;
+        case QWindowsIntegration::AngleBackendSwiftShader:
+            return QWindowsOpenGLTester::AngleRendererSwiftShader;
+        case QWindowsIntegration::AngleBackendDefault:
+            break;
+        }
+    }
+
+    if (qEnvironmentVariableIsSet("QT_ANGLE_PLATFORM")) {
+        const QByteArray anglePlatform = qgetenv("QT_ANGLE_PLATFORM").toLower();
+        if (anglePlatform == "d3d11")
+            return QWindowsOpenGLTester::AngleRendererD3d11;
+        if (anglePlatform == "d3d9")
+            return QWindowsOpenGLTester::AngleRendererD3d9;
+        if (anglePlatform == "warp")
+            return QWindowsOpenGLTester::AngleRendererD3d11Warp;
+        if (anglePlatform == "d3d11on12")
+            return QWindowsOpenGLTester::AngleRendererD3d11On12;
+        if (anglePlatform == "vulkan")
+            return QWindowsOpenGLTester::AngleRendererVulkan;
+        if (anglePlatform == "swiftshader")
+            return QWindowsOpenGLTester::AngleRendererSwiftShader;
+        qCWarning(lcQpaGl) << "Invalid value set for QT_ANGLE_PLATFORM:" << anglePlatform;
+    }
+
+    return QWindowsOpenGLTester::Gles;
+}
+
 QWindowsOpenGLTester::Renderer QWindowsOpenGLTester::requestedRenderer()
 {
     const char openGlVar[] = "QT_OPENGL";
     if (QCoreApplication::testAttribute(Qt::AA_UseOpenGLES))
-        qWarning("Qt::AA_UseOpenGLES is no longer supported in Qt 6");
+        return requestedGlesRenderer();
     if (QCoreApplication::testAttribute(Qt::AA_UseDesktopOpenGL))
         return QWindowsOpenGLTester::DesktopGl;
     if (QCoreApplication::testAttribute(Qt::AA_UseSoftwareOpenGL))
         return QWindowsOpenGLTester::SoftwareRasterizer;
+
     if (qEnvironmentVariableIsSet(openGlVar)) {
         const QByteArray requested = qgetenv(openGlVar);
         if (requested == "angle")
-            qWarning("QT_OPENGL=angle is no longer supported in Qt 6");
+            return requestedGlesRenderer();
         if (requested == "desktop")
             return QWindowsOpenGLTester::DesktopGl;
         if (requested == "software")
             return QWindowsOpenGLTester::SoftwareRasterizer;
         qCWarning(lcQpaGl) << "Invalid value set for " << openGlVar << ": " << requested;
     }
+
+    if (const QWindowsIntegration *integration = QWindowsIntegration::instance(); integration
+        && integration->angleBackend() != QWindowsIntegration::AngleBackendDefault) {
+        return requestedGlesRenderer();
+    }
+
     return QWindowsOpenGLTester::InvalidRenderer;
 }
 
@@ -253,10 +303,16 @@ QWindowsOpenGLTester::Renderers QWindowsOpenGLTester::detectSupportedRenderers(c
     if (it != srCache->cend())
         return *it;
 
-    QWindowsOpenGLTester::Renderers result(QWindowsOpenGLTester::SoftwareRasterizer);
+    QWindowsOpenGLTester::Renderers result(QWindowsOpenGLTester::AngleRendererD3d11
+        | QWindowsOpenGLTester::AngleRendererD3d9
+        | QWindowsOpenGLTester::AngleRendererD3d11Warp
+        | QWindowsOpenGLTester::AngleRendererD3d11On12
+        | QWindowsOpenGLTester::AngleRendererVulkan
+        | QWindowsOpenGLTester::AngleRendererSwiftShader
+        | QWindowsOpenGLTester::SoftwareRasterizer);
 
     // Don't test for GL if explicitly requested or GLES only is requested
-    if (requested == DesktopGl || testDesktopGL())
+    if (requested == DesktopGl || ((requested & GlesMask) == 0 && testDesktopGL()))
         result |= QWindowsOpenGLTester::DesktopGl;
 
     QSet<QString> features; // empty by default -> nothing gets disabled

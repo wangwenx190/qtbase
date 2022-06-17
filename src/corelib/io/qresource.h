@@ -23,7 +23,8 @@ public:
     enum Compression {
         NoCompression,
         ZlibCompression,
-        ZstdCompression
+        ZstdCompression,
+        LzmaCompression
     };
 
     QResource(const QString &file = QString(), const QLocale &locale = QLocale());

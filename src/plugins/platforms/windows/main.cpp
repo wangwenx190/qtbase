@@ -26,6 +26,7 @@ using namespace Qt::StringLiterals;
     \li \c fontengine=native Indicates that native font engine should be used (default)
     \li \c fontengine=freetype Indicates that freetype font engine should be used
     \li \c gl=gdi Indicates that ARB Open GL functionality should not be used
+    \li \c angle=<backend> Selects the ANGLE backend (d3d11, d3d9, warp, d3d11on12, vulkan, or swiftshader)
     \li \c verbose=<number> Chooses the verbosity level of the platform plugin logging (0-9).
     \endlist
 

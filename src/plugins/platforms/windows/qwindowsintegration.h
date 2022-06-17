@@ -31,6 +31,16 @@ class QWindowsIntegration : public QPlatformIntegration
 {
     Q_DISABLE_COPY_MOVE(QWindowsIntegration)
 public:
+    enum AngleBackend {
+        AngleBackendDefault,
+        AngleBackendD3d11,
+        AngleBackendD3d9,
+        AngleBackendWarp,
+        AngleBackendD3d11On12,
+        AngleBackendVulkan,
+        AngleBackendSwiftShader
+    };
+
     enum Options { // Options to be passed on command line.
         FontDatabaseFreeType = 0x1,
         FontDatabaseNative = 0x2,
@@ -87,6 +97,7 @@ public:
     static QWindowsIntegration *instance() { return m_instance; }
 
     unsigned options() const;
+    AngleBackend angleBackend() const;
 
     void beep() const override;
 

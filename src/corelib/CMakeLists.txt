@@ -1139,11 +1139,6 @@ qt_internal_extend_target(Core CONDITION QT_FEATURE_datetimeparser
         parse/qtparsetimezone.cpp parse/qtparsetimezone_p.h
 )
 
-qt_internal_extend_target(Core CONDITION QT_FEATURE_zstd
-    LIBRARIES
-        WrapZSTD::WrapZSTD
-)
-
 qt_internal_extend_target(Core CONDITION QT_FEATURE_filesystemwatcher
     SOURCES
         io/qfilesystemwatcher.cpp io/qfilesystemwatcher.h io/qfilesystemwatcher_p.h
@@ -1568,11 +1563,6 @@ if(QT_FEATURE_mimetype AND QT_FEATURE_mimetype_database)
         set(archiving_api "External")
     else()
         set(archiving_api "CMake")
-        if(QT_FEATURE_zstd AND NOT QT_CMAKE_ZSTD_SUPPORT)
-            message(FATAL_ERROR
-                "CMake was not built with zstd support. "
-                "Rebuild CMake or set QT_AVOID_CMAKE_ARCHIVING_API=ON.")
-        endif()
     endif()
 
     if(DEFINED INPUT_mimetype_database_compression)
@@ -1584,15 +1574,8 @@ if(QT_FEATURE_mimetype AND QT_FEATURE_mimetype_database)
             " ${INPUT_mimetype_database_compression}\nSupported compression types:\n"
             "    ${supported_compression_types}")
         endif()
-        if(compression_type STREQUAL "zstd" AND NOT QT_FEATURE_zstd)
-            message(FATAL_ERROR
-                "zstd compression is selected for mime type database, but the 'zstd'"
-                " feature is disabled.")
-        endif()
-    elseif(QT_FEATURE_zstd)
-        set(compression_type "zstd")
     else()
-        set(compression_type "gzip")
+        set(compression_type "zstd")
     endif()
 
     if(QT_INTERNAL_ENABLE_VERBOSE_MIME_DATABASE_COMPRESSION)
