@@ -1230,8 +1230,7 @@ QFontEngine *QWindowsFontDatabase::createEngine(const QFontDef &request, const Q
                 bool needsSimulation = false;
 #if QT_CONFIG(direct2d)
                 IDWriteFontFace2 *directWriteFontFace2 = nullptr;
-                if (SUCCEEDED(directWriteFontFace->QueryInterface(__uuidof(IDWriteFontFace2),
-                                                                  reinterpret_cast<void **>(&directWriteFontFace2)))) {
+                if (SUCCEEDED(directWriteFontFace->QueryInterface(IID_PPV_ARGS(&directWriteFontFace2)))) {
                     if (directWriteFontFace2->IsColorFont())
                         isColorFont = directWriteFontFace2->GetPaletteEntryCount() > 0;
 

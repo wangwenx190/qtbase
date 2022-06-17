@@ -1,0 +1,17 @@
+{
+    "Id": "zstd",
+    "Name": "Data Compression Library (zstd)",
+    "QDocModule": "qtcore",
+    "QtUsage": "Optionally used in Qt Core and development tools. Configure with -system-zstd to avoid.",
+    "SecurityCritical": true,
+
+    "Description": "Zstandard - Fast real-time compression algorithm.",
+    "Homepage": "https://facebook.github.io/zstd/",
+    "Version": "1.5.6",
+    "DownloadLocation": "https://github.com/facebook/zstd/releases/download/v1.5.6/zstd-1.5.6.tar.gz",
+
+    "License": "BSD License",
+    "LicenseId": "BSD",
+    "LicenseFile": "LICENSE",
+    "Copyright": "(c) Meta Platforms, Inc. and affiliates"
+}

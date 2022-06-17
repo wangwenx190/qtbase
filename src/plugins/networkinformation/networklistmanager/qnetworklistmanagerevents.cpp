@@ -5,6 +5,7 @@
 #include <QtCore/private/qsystemerror_p.h>
 
 #include <QtCore/qpointer.h>
+#include <QtCore/qoperatingsystemversion.h>
 
 #include <mutex>
 
@@ -100,26 +101,28 @@ bool QNetworkListManagerEvents::start()
     }
 
 #if QT_CONFIG(cpp_winrt)
-    using namespace winrt::Windows::Networking::Connectivity;
-    using winrt::Windows::Foundation::IInspectable;
-    try {
-        // Register for changes in the network and store a token to unregister later:
-        token = NetworkInformation::NetworkStatusChanged(
-                [owner = QPointer(this)](const IInspectable sender) {
-                    Q_UNUSED(sender);
-                    if (owner) {
-                        std::scoped_lock locker(owner->winrtLock);
-                        if (owner->token)
-                            owner->emitWinRTUpdates();
-                    }
-                });
-    } catch (const winrt::hresult_error &ex) {
-        qCWarning(lcNetInfoNLM) << "Failed to register network status changed callback:"
-                                << QSystemError::windowsComString(ex.code());
-    }
+    if (QOperatingSystemVersion::isWin10OrGreater()) {
+        using namespace winrt::Windows::Networking::Connectivity;
+        using winrt::Windows::Foundation::IInspectable;
+        try {
+            // Register for changes in the network and store a token to unregister later:
+            token = NetworkInformation::NetworkStatusChanged(
+                    [owner = QPointer(this)](const IInspectable sender) {
+                        Q_UNUSED(sender);
+                        if (owner) {
+                            std::scoped_lock locker(owner->winrtLock);
+                            if (owner->token)
+                                owner->emitWinRTUpdates();
+                        }
+                    });
+        } catch (const winrt::hresult_error &ex) {
+            qCWarning(lcNetInfoNLM) << "Failed to register network status changed callback:"
+                                    << QSystemError::windowsComString(ex.code());
+        }
 
-    // Emit initial state
-    emitWinRTUpdates();
+        // Emit initial state
+        emitWinRTUpdates();
+    }
 #endif
 
     return true;
@@ -138,13 +141,15 @@ void QNetworkListManagerEvents::stop()
     // Even if we fail we should still try to unregister from winrt events:
 
 #if QT_CONFIG(cpp_winrt)
-    // Try to synchronize unregistering with potentially in-progress callbacks
-    std::scoped_lock locker(winrtLock);
-    if (token) {
-        using namespace winrt::Windows::Networking::Connectivity;
-        // Pass the token we stored earlier to unregister:
-        NetworkInformation::NetworkStatusChanged(token);
-        token = {};
+    if (QOperatingSystemVersion::isWin10OrGreater()) {
+        // Try to synchronize unregistering with potentially in-progress callbacks
+        std::scoped_lock locker(winrtLock);
+        if (token) {
+            using namespace winrt::Windows::Networking::Connectivity;
+            // Pass the token we stored earlier to unregister:
+            NetworkInformation::NetworkStatusChanged(token);
+            token = {};
+        }
     }
 #endif
 }
@@ -195,6 +200,9 @@ using namespace winrt::Windows::Networking::Connectivity;
 [[nodiscard]]
 QNetworkInformation::TransportMedium getTransportMedium(const ConnectionProfile &profile)
 {
+    if (!QOperatingSystemVersion::isWin10OrGreater())
+        return QNetworkInformation::TransportMedium::Unknown;
+
     if (profile.IsWwanConnectionProfile())
         return QNetworkInformation::TransportMedium::Cellular;
     if (profile.IsWlanConnectionProfile())
@@ -230,6 +238,8 @@ QNetworkInformation::TransportMedium getTransportMedium(const ConnectionProfile 
 
 [[nodiscard]] bool getMetered(const ConnectionProfile &profile)
 {
+    if (!QOperatingSystemVersion::isWin10OrGreater())
+        return false;
     ConnectionCost cost(nullptr);
     try {
         cost = profile.GetConnectionCost();
@@ -247,6 +257,8 @@ QNetworkInformation::TransportMedium getTransportMedium(const ConnectionProfile 
 
 void QNetworkListManagerEvents::emitWinRTUpdates()
 {
+    if (!QOperatingSystemVersion::isWin10OrGreater())
+        return;
     using namespace winrt::Windows::Networking::Connectivity;
     ConnectionProfile profile = nullptr;
     try {

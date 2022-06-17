@@ -7,6 +7,8 @@
 
 QT_BEGIN_NAMESPACE
 
+using namespace Qt::StringLiterals;
+
 namespace QRhiD3D {
 
 bool output6ForWindow(QWindow *w, IDXGIAdapter1 *adapter, IDXGIOutput6 **result)
@@ -32,7 +34,7 @@ bool output6ForWindow(QWindow *w, IDXGIAdapter1 *adapter, IDXGIOutput6 **result)
         }
     }
     if (currentOutput) {
-        ok = SUCCEEDED(currentOutput->QueryInterface(__uuidof(IDXGIOutput6), reinterpret_cast<void **>(result)));
+        ok = SUCCEEDED(currentOutput->QueryInterface(IID_PPV_ARGS(result)));
         currentOutput->Release();
     }
     return ok;
@@ -51,16 +53,29 @@ bool outputDesc1ForWindow(QWindow *w, IDXGIAdapter1 *adapter, DXGI_OUTPUT_DESC1 
 
 float sdrWhiteLevelInNits(const DXGI_OUTPUT_DESC1 &outputDesc)
 {
+    static constexpr const auto kDefaultWhiteLevel = 100.0f;
+
+    using GetDisplayConfigBufferSizesPFN = decltype(&::GetDisplayConfigBufferSizes);
+    using QueryDisplayConfigPFN = decltype(&::QueryDisplayConfig);
+    using DisplayConfigGetDeviceInfoPFN = decltype(&::DisplayConfigGetDeviceInfo);
+
+    static const auto pGetDisplayConfigBufferSizes = reinterpret_cast<GetDisplayConfigBufferSizesPFN>(QSystemLibrary::resolve(u"user32"_s, "GetDisplayConfigBufferSizes"));
+    static const auto pQueryDisplayConfig = reinterpret_cast<QueryDisplayConfigPFN>(QSystemLibrary::resolve(u"user32"_s, "QueryDisplayConfig"));
+    static const auto pDisplayConfigGetDeviceInfo = reinterpret_cast<DisplayConfigGetDeviceInfoPFN>(QSystemLibrary::resolve(u"user32"_s, "DisplayConfigGetDeviceInfo"));
+
+    if (!pGetDisplayConfigBufferSizes || !pQueryDisplayConfig || !pDisplayConfigGetDeviceInfo)
+        return kDefaultWhiteLevel;
+
     QVector<DISPLAYCONFIG_PATH_INFO> pathInfos;
     uint32_t pathInfoCount, modeInfoCount;
     LONG result;
     do {
-        if (GetDisplayConfigBufferSizes(QDC_ONLY_ACTIVE_PATHS, &pathInfoCount, &modeInfoCount) == ERROR_SUCCESS) {
+        if (pGetDisplayConfigBufferSizes(QDC_ONLY_ACTIVE_PATHS, &pathInfoCount, &modeInfoCount) == ERROR_SUCCESS) {
             pathInfos.resize(pathInfoCount);
             QVector<DISPLAYCONFIG_MODE_INFO> modeInfos(modeInfoCount);
-            result = QueryDisplayConfig(QDC_ONLY_ACTIVE_PATHS, &pathInfoCount, pathInfos.data(), &modeInfoCount, modeInfos.data(), nullptr);
+            result = pQueryDisplayConfig(QDC_ONLY_ACTIVE_PATHS, &pathInfoCount, pathInfos.data(), &modeInfoCount, modeInfos.data(), nullptr);
         } else {
-            return 200.0f;
+            return kDefaultWhiteLevel;
         }
     } while (result == ERROR_INSUFFICIENT_BUFFER);
 
@@ -74,51 +89,49 @@ float sdrWhiteLevelInNits(const DXGI_OUTPUT_DESC1 &outputDesc)
         deviceName.header.size = sizeof(deviceName);
         deviceName.header.adapterId = info.sourceInfo.adapterId;
         deviceName.header.id = info.sourceInfo.id;
-        if (DisplayConfigGetDeviceInfo(&deviceName.header) == ERROR_SUCCESS) {
+        if (pDisplayConfigGetDeviceInfo(&deviceName.header) == ERROR_SUCCESS) {
             if (!wcscmp(monitorInfo.szDevice, deviceName.viewGdiDeviceName)) {
                 DISPLAYCONFIG_SDR_WHITE_LEVEL whiteLevel = {};
                 whiteLevel.header.type = DISPLAYCONFIG_DEVICE_INFO_GET_SDR_WHITE_LEVEL;
                 whiteLevel.header.size = sizeof(DISPLAYCONFIG_SDR_WHITE_LEVEL);
                 whiteLevel.header.adapterId = info.targetInfo.adapterId;
                 whiteLevel.header.id = info.targetInfo.id;
-                if (DisplayConfigGetDeviceInfo(&whiteLevel.header) == ERROR_SUCCESS)
+                if (pDisplayConfigGetDeviceInfo(&whiteLevel.header) == ERROR_SUCCESS)
                     return whiteLevel.SDRWhiteLevel * 80 / 1000.0f;
             }
         }
     }
 
-    return 200.0f;
+    return kDefaultWhiteLevel;
 }
 
 pD3DCompile resolveD3DCompile()
 {
-    for (const wchar_t *libraryName : {L"D3DCompiler_47", L"D3DCompiler_43"}) {
-        QSystemLibrary library(libraryName);
-        if (library.load()) {
-            if (auto symbol = library.resolve("D3DCompile"))
-                return reinterpret_cast<pD3DCompile>(symbol);
-        } else {
-            qWarning("Failed to load D3DCompiler_47/43.dll");
+    static const auto d3dCompile = []() -> pD3DCompile {
+        for (const wchar_t *libraryName : {L"D3DCompiler_47", L"D3DCompiler_43"}) {
+            QSystemLibrary library(libraryName);
+            if (library.load()) {
+                if (const auto symbol = library.resolve("D3DCompile"))
+                    return reinterpret_cast<pD3DCompile>(symbol);
+            }
         }
-    }
-    return nullptr;
+        qWarning("Failed to load D3DCompiler_47/43.dll");
+        return nullptr;
+    }();
+    return d3dCompile;
 }
 
 IDCompositionDevice *createDirectCompositionDevice()
 {
-    QSystemLibrary dcomplib(QStringLiteral("dcomp"));
-    typedef HRESULT (__stdcall *DCompositionCreateDeviceFuncPtr)(
-        _In_opt_ IDXGIDevice *dxgiDevice,
-        _In_ REFIID iid,
-        _Outptr_ void **dcompositionDevice);
-    DCompositionCreateDeviceFuncPtr func = reinterpret_cast<DCompositionCreateDeviceFuncPtr>(
-        dcomplib.resolve("DCompositionCreateDevice"));
-    if (!func) {
-        qWarning("Unable to resolve DCompositionCreateDevice, perhaps dcomp.dll is missing?");
+    using DCompositionCreateDevicePtr = decltype(&::DCompositionCreateDevice);
+    static const auto pDCompositionCreateDevice =
+        reinterpret_cast<DCompositionCreateDevicePtr>(
+            QSystemLibrary::resolve(u"dcomp"_s, "DCompositionCreateDevice"));
+    if (!pDCompositionCreateDevice) {
         return nullptr;
     }
     IDCompositionDevice *device = nullptr;
-    HRESULT hr = func(nullptr, __uuidof(IDCompositionDevice), reinterpret_cast<void **>(&device));
+    const HRESULT hr = pDCompositionCreateDevice(nullptr, IID_PPV_ARGS(&device));
     if (FAILED(hr)) {
         qWarning("Failed to create Direct Composition device: %s",
                  qPrintable(QSystemError::windowsComString(hr)));
@@ -130,26 +143,26 @@ IDCompositionDevice *createDirectCompositionDevice()
 #ifdef QRHI_D3D12_HAS_DXC
 std::pair<IDxcCompiler *, IDxcLibrary *> createDxcCompiler()
 {
-    QSystemLibrary dxclib(QStringLiteral("dxcompiler"));
+    QSystemLibrary dxclib(u"dxcompiler"_s);
     // this will not be in the system library location, hence onlySystemDirectory==false
     if (!dxclib.load(false)) {
         qWarning("Failed to load dxcompiler.dll");
         return {};
     }
-    DxcCreateInstanceProc func = reinterpret_cast<DxcCreateInstanceProc>(dxclib.resolve("DxcCreateInstance"));
+    const auto func = reinterpret_cast<DxcCreateInstanceProc>(dxclib.resolve("DxcCreateInstance"));
     if (!func) {
         qWarning("Unable to resolve DxcCreateInstance");
         return {};
     }
     IDxcCompiler *compiler = nullptr;
-    HRESULT hr = func(CLSID_DxcCompiler, __uuidof(IDxcCompiler), reinterpret_cast<void**>(&compiler));
+    HRESULT hr = func(CLSID_DxcCompiler, IID_PPV_ARGS(&compiler));
     if (FAILED(hr)) {
         qWarning("Failed to create dxc compiler instance: %s",
                  qPrintable(QSystemError::windowsComString(hr)));
         return {};
     }
     IDxcLibrary *library = nullptr;
-    hr = func(CLSID_DxcLibrary, __uuidof(IDxcLibrary), reinterpret_cast<void**>(&library));
+    hr = func(CLSID_DxcLibrary, IID_PPV_ARGS(&library));
     if (FAILED(hr)) {
         qWarning("Failed to create dxc library instance: %s",
                  qPrintable(QSystemError::windowsComString(hr)));

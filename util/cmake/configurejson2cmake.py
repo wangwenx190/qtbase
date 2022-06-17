@@ -463,6 +463,7 @@ def parseInput(ctx, sinput, data, cm_fh):
         "widgets",
         "xplatform",
         "zlib",
+        "zstd",
         "eventfd",
         "glib",
         "icu",

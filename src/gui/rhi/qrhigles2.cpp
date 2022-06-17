@@ -10,8 +10,14 @@
 #include <QtGui/private/qwindow_p.h>
 #include <qpa/qplatformopenglcontext.h>
 #include <qmath.h>
+#ifdef Q_OS_WINDOWS
+#  include <QtCore/private/qsystemlibrary_p.h>
+#  include <dwmapi.h>
+#endif
 
 QT_BEGIN_NAMESPACE
+
+using namespace Qt::StringLiterals;
 
 /*
   OpenGL backend. Binding vertex attribute locations and decomposing uniform
@@ -2226,6 +2232,20 @@ QRhi::FrameOpResult QRhiGles2::endFrame(QRhiSwapChain *swapChain, QRhi::EndFrame
     } else {
         f->glFlush();
     }
+
+#ifdef Q_OS_WINDOWS
+    // Try to prevent glitches on resizing the window.
+    static const auto pDwmFlush = reinterpret_cast<decltype(&::DwmFlush)>(QSystemLibrary::resolve("dwmapi"_L1, "DwmFlush"));
+    if (pDwmFlush) {
+        pDwmFlush();
+    } else {
+        static bool warnedOnce = false;
+        if (!warnedOnce) {
+            warnedOnce = true;
+            qWarning("OpenGL rhi: failed to load DwmFlush().");
+        }
+    }
+#endif // Q_OS_WINDOWS
 
     swapChainD->frameCount += 1;
     currentSwapChain = nullptr;

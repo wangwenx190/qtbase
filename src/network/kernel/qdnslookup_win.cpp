@@ -8,6 +8,7 @@
 #include <qendian.h>
 #include <private/qnativesocketengine_p.h>
 #include <private/qsystemerror_p.h>
+#include <private/qsystemlibrary_p.h>
 #include <qurl.h>
 #include <qspan.h>
 
@@ -64,6 +65,8 @@ DNS_STATUS WINAPI DnsQueryEx(PDNS_QUERY_REQUEST pQueryRequest,
 #endif
 
 QT_BEGIN_NAMESPACE
+
+using namespace Qt::StringLiterals;
 
 static DNS_STATUS sendAlternate(QDnsLookupRunnable *self, QDnsLookupReply *reply,
                                 PDNS_QUERY_REQUEST request, PDNS_QUERY_RESULT results)
@@ -143,9 +146,31 @@ void QDnsLookupRunnable::query(QDnsLookupReply *reply)
     results.Version = 1;
     DNS_STATUS status = ERROR_INVALID_PARAMETER;
     switch (protocol) {
-    case QDnsLookup::Standard:
-        status = DnsQueryEx(&request, &results, nullptr);
+    case QDnsLookup::Standard: {
+        static const auto pDnsQueryEx = reinterpret_cast<decltype(&::DnsQueryEx)>(QSystemLibrary::resolve(u"dnsapi"_s, "DnsQueryEx"));
+        if (pDnsQueryEx) {
+            status = pDnsQueryEx(&request, &results, nullptr);
+        } else {
+            IP4_ARRAY srvList;
+            memset(&srvList, 0, sizeof(IP4_ARRAY));
+            if (!nameserver.isNull()) {
+                if (nameserver.protocol() == QAbstractSocket::IPv4Protocol) {
+                    // The below code is referenced from: http://support.microsoft.com/kb/831226
+                    srvList.AddrCount = 1;
+                    srvList.AddrArray[0] = htonl(nameserver.toIPv4Address());
+                } else if (nameserver.protocol() == QAbstractSocket::IPv6Protocol) {
+                    // For supoprting IPv6 nameserver addresses, we'll need to switch
+                    // from DnsQuey() to DnsQueryEx() as it supports passing an IPv6
+                    // address in the nameserver list
+                    reply->error = QDnsLookup::ResolverError;
+                    reply->errorString = "IPv6 addresses for nameservers are currently not supported"_L1;
+                    return;
+                }
+            }
+            status = DnsQuery_W(request.QueryName, request.QueryType, request.QueryOptions, &srvList, &results.pQueryRecords, nullptr);
+        }
         break;
+    }
     case QDnsLookup::DnsOverTls:
         status = sendAlternate(this, reply, &request, &results);
         break;

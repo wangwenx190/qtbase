@@ -4,6 +4,7 @@
 #include <QtCore/qt_windows.h>
 
 #include "qwindowspointerhandler.h"
+#include "qwindowsmousehandler.h"
 #if QT_CONFIG(tabletevent)
 #  include "qwindowstabletsupport.h"
 #endif
@@ -38,24 +39,19 @@ enum {
 
 qint64 QWindowsPointerHandler::m_nextInputDeviceId = 1;
 
-const QPointingDevice *primaryMouse()
-{
-    static QPointer<const QPointingDevice> result;
-    if (!result)
-        result = QPointingDevice::primaryPointingDevice();
-    return result;
-}
-
 QWindowsPointerHandler::~QWindowsPointerHandler()
 {
 }
 
 bool QWindowsPointerHandler::translatePointerEvent(QWindow *window, HWND hwnd, QtWindows::WindowsEventType et, MSG msg, LRESULT *result)
 {
+    if (!QWindowsApi::instance()->supportsPointerApi())
+        return false;
+
     *result = 0;
     const quint32 pointerId = GET_POINTERID_WPARAM(msg.wParam);
 
-    if (!GetPointerType(pointerId, &m_pointerType)) {
+    if (!QWindowsApi::instance()->pGetPointerType(pointerId, &m_pointerType)) {
         qWarning() << "GetPointerType() failed:" << qt_error_string();
         return false;
     }
@@ -69,12 +65,12 @@ bool QWindowsPointerHandler::translatePointerEvent(QWindow *window, HWND hwnd, Q
     }
     case QT_PT_TOUCH: {
         quint32 pointerCount = 0;
-        if (!GetPointerFrameTouchInfo(pointerId, &pointerCount, nullptr)) {
+        if (!QWindowsApi::instance()->pGetPointerFrameTouchInfo(pointerId, &pointerCount, nullptr)) {
             qWarning() << "GetPointerFrameTouchInfo() failed:" << qt_error_string();
             return false;
         }
         QVarLengthArray<POINTER_TOUCH_INFO, 10> touchInfo(pointerCount);
-        if (!GetPointerFrameTouchInfo(pointerId, &pointerCount, touchInfo.data())) {
+        if (!QWindowsApi::instance()->pGetPointerFrameTouchInfo(pointerId, &pointerCount, touchInfo.data())) {
             qWarning() << "GetPointerFrameTouchInfo() failed:" << qt_error_string();
             return false;
         }
@@ -87,7 +83,7 @@ bool QWindowsPointerHandler::translatePointerEvent(QWindow *window, HWND hwnd, Q
         // dispatch any skipped frames if event compression is disabled by the app
         if (historyCount > 1 && !QCoreApplication::testAttribute(Qt::AA_CompressHighFrequencyEvents)) {
             touchInfo.resize(pointerCount * historyCount);
-            if (!GetPointerFrameTouchInfoHistory(pointerId,
+            if (!QWindowsApi::instance()->pGetPointerFrameTouchInfoHistory(pointerId,
                                                  &historyCount,
                                                  &pointerCount,
                                                  touchInfo.data())) {
@@ -108,7 +104,7 @@ bool QWindowsPointerHandler::translatePointerEvent(QWindow *window, HWND hwnd, Q
     }
     case QT_PT_PEN: {
         POINTER_PEN_INFO penInfo;
-        if (!GetPointerPenInfo(pointerId, &penInfo)) {
+        if (!QWindowsApi::instance()->pGetPointerPenInfo(pointerId, &penInfo)) {
             qWarning() << "GetPointerPenInfo() failed:" << qt_error_string();
             return false;
         }
@@ -120,7 +116,7 @@ bool QWindowsPointerHandler::translatePointerEvent(QWindow *window, HWND hwnd, Q
                 || !QCoreApplication::testAttribute(Qt::AA_CompressTabletEvents))) {
             QVarLengthArray<POINTER_PEN_INFO, 10> penInfoHistory(historyCount);
 
-            if (!GetPointerPenInfoHistory(pointerId, &historyCount, penInfoHistory.data())) {
+            if (!QWindowsApi::instance()->pGetPointerPenInfoHistory(pointerId, &historyCount, penInfoHistory.data())) {
                 qWarning() << "GetPointerPenInfoHistory() failed:" << qt_error_string();
                 return false;
             }
@@ -222,7 +218,7 @@ static Qt::MouseButtons mouseButtonsFromKeyState(WPARAM keyState)
     return result;
 }
 
-Qt::MouseButtons QWindowsPointerHandler::queryMouseButtons()
+static Qt::MouseButtons queryMouseButtons()
 {
     Qt::MouseButtons result = Qt::NoButton;
     const bool mouseSwapped = GetSystemMetrics(SM_SWAPBUTTON);
@@ -426,6 +422,9 @@ bool QWindowsPointerHandler::translateTouchEvent(QWindow *window, HWND hwnd,
 {
     Q_UNUSED(hwnd);
 
+    if (!QWindowsApi::instance()->supportsPointerApi())
+        return false;
+
     auto *touchInfo = static_cast<POINTER_TOUCH_INFO *>(vTouchInfo);
 
     if (et & QtWindows::NonClientEventFlag)
@@ -527,7 +526,7 @@ bool QWindowsPointerHandler::translateTouchEvent(QWindow *window, HWND hwnd,
         inputIds.insert(touchPoint.id);
 
         // Avoid getting repeated messages for this frame if there are multiple pointerIds
-        SkipPointerFrameMessages(touchInfo[i].pointerInfo.pointerId);
+        QWindowsApi::instance()->pSkipPointerFrameMessages(touchInfo[i].pointerInfo.pointerId);
     }
 
     // Some devices send touches for each finger in a different message/frame, instead of consolidating
@@ -568,13 +567,16 @@ bool QWindowsPointerHandler::translatePenEvent(QWindow *window, HWND hwnd, QtWin
                                                MSG msg, PVOID vPenInfo)
 {
 #if QT_CONFIG(tabletevent)
+    if (!QWindowsApi::instance()->supportsPointerApi())
+        return false;
+
     if (et & QtWindows::NonClientEventFlag)
         return false; // Let DefWindowProc() handle Non Client messages.
 
     auto *penInfo = static_cast<POINTER_PEN_INFO *>(vPenInfo);
 
     RECT pRect, dRect;
-    if (!GetPointerDeviceRects(penInfo->pointerInfo.sourceDevice, &pRect, &dRect))
+    if (!QWindowsApi::instance()->pGetPointerDeviceRects(penInfo->pointerInfo.sourceDevice, &pRect, &dRect))
         return false;
 
     const auto systemId = (qint64)penInfo->pointerInfo.sourceDevice;
@@ -792,7 +794,7 @@ bool QWindowsPointerHandler::translateMouseEvent(QWindow *window,
     }
 
     Qt::MouseEventSource source = Qt::MouseEventNotSynthesized;
-    const QPointingDevice *device = primaryMouse();
+    const QPointingDevice *device = QWindowsMouseHandler::primaryMouse();
 
     // Following the logic of the old mouse handler, only events synthesized
     // for touch screen are marked as such. On some systems, using the bit 7 of

@@ -355,6 +355,9 @@ bool QOperatingSystemVersionBase::isAnyOfType(std::initializer_list<OSType> type
 
 #ifndef QT_BOOTSTRAPPED
 
+const QOperatingSystemVersion QOperatingSystemVersion::WindowsVista =
+    QOperatingSystemVersion(QOperatingSystemVersion::Windows, 6, 0);
+
 /*!
     \variable QOperatingSystemVersion::Windows7
     \brief a version corresponding to Windows 7 (version 6.1).
@@ -386,6 +389,13 @@ const QOperatingSystemVersion QOperatingSystemVersion::Windows8_1 =
  */
 const QOperatingSystemVersion QOperatingSystemVersion::Windows10 =
     QOperatingSystemVersion(QOperatingSystemVersion::Windows, 10);
+
+const QOperatingSystemVersionBase QOperatingSystemVersion::Windows10_1507;
+const QOperatingSystemVersionBase QOperatingSystemVersion::Windows10_1511;
+const QOperatingSystemVersionBase QOperatingSystemVersion::Windows10_1607;
+const QOperatingSystemVersionBase QOperatingSystemVersion::Windows10_1703;
+const QOperatingSystemVersionBase QOperatingSystemVersion::Windows10_1709;
+const QOperatingSystemVersionBase QOperatingSystemVersion::Windows10_1803;
 
 /*!
     \variable QOperatingSystemVersion::Windows10_1809

@@ -36,22 +36,14 @@ QT_BEGIN_NAMESPACE
 
 using namespace Qt::StringLiterals;
 
-static inline QDpi deviceDPI(HDC hdc)
-{
-    return QDpi(GetDeviceCaps(hdc, LOGPIXELSX), GetDeviceCaps(hdc, LOGPIXELSY));
-}
-
-static inline QDpi monitorDPI(HMONITOR hMonitor)
-{
-    UINT dpiX;
-    UINT dpiY;
-    if (SUCCEEDED(GetDpiForMonitor(hMonitor, MDT_EFFECTIVE_DPI, &dpiX, &dpiY)))
-        return QDpi(dpiX, dpiY);
-    return {0, 0};
-}
-
 static std::vector<DISPLAYCONFIG_PATH_INFO> getPathInfo(const MONITORINFOEX &viewInfo)
 {
+    if (!QWindowsApi::instance()->pGetDisplayConfigBufferSizes
+            || !QWindowsApi::instance()->pQueryDisplayConfig
+            || !QWindowsApi::instance()->pDisplayConfigGetDeviceInfo) {
+        return {};
+    }
+
     // We might want to consider storing adapterId/id from DISPLAYCONFIG_PATH_TARGET_INFO.
     std::vector<DISPLAYCONFIG_PATH_INFO> pathInfos;
     std::vector<DISPLAYCONFIG_MODE_INFO> modeInfos;
@@ -64,14 +56,16 @@ static std::vector<DISPLAYCONFIG_PATH_INFO> getPathInfo(const MONITORINFOEX &vie
         // QueryDisplayConfig documentation doesn't say the number of needed elements is updated
         // when the call fails with ERROR_INSUFFICIENT_BUFFER, so we need a separate call to
         // look up the needed buffer sizes.
-        if (GetDisplayConfigBufferSizes(QDC_ONLY_ACTIVE_PATHS, &numPathArrayElements,
-                                        &numModeInfoArrayElements) != ERROR_SUCCESS) {
+        if (QWindowsApi::instance()->pGetDisplayConfigBufferSizes(
+                QDC_ONLY_ACTIVE_PATHS, &numPathArrayElements,
+                &numModeInfoArrayElements) != ERROR_SUCCESS) {
             return {};
         }
         pathInfos.resize(numPathArrayElements);
         modeInfos.resize(numModeInfoArrayElements);
-        result = QueryDisplayConfig(QDC_ONLY_ACTIVE_PATHS, &numPathArrayElements, pathInfos.data(),
-                                    &numModeInfoArrayElements, modeInfos.data(), nullptr);
+        result = QWindowsApi::instance()->pQueryDisplayConfig(
+                    QDC_ONLY_ACTIVE_PATHS, &numPathArrayElements, pathInfos.data(),
+                    &numModeInfoArrayElements, modeInfos.data(), nullptr);
     } while (result == ERROR_INSUFFICIENT_BUFFER);
 
     if (result != ERROR_SUCCESS)
@@ -85,7 +79,7 @@ static std::vector<DISPLAYCONFIG_PATH_INFO> getPathInfo(const MONITORINFOEX &vie
                 deviceName.header.size = sizeof(DISPLAYCONFIG_SOURCE_DEVICE_NAME);
                 deviceName.header.adapterId = path.sourceInfo.adapterId;
                 deviceName.header.id = path.sourceInfo.id;
-                if (DisplayConfigGetDeviceInfo(&deviceName.header) == ERROR_SUCCESS) {
+                if (QWindowsApi::instance()->pDisplayConfigGetDeviceInfo(&deviceName.header) == ERROR_SUCCESS) {
                     return wcscmp(viewInfo.szDevice, deviceName.viewGdiDeviceName) != 0;
                 }
                 return true;
@@ -101,7 +95,8 @@ static std::vector<DISPLAYCONFIG_PATH_INFO> getPathInfo(const MONITORINFOEX &vie
 static float getMonitorSDRWhiteLevel(DISPLAYCONFIG_PATH_TARGET_INFO *targetInfo)
 {
     const float defaultSdrWhiteLevel = 200.0;
-    if (!targetInfo)
+
+    if (!QWindowsApi::instance()->pDisplayConfigGetDeviceInfo || !targetInfo)
         return defaultSdrWhiteLevel;
 
     DISPLAYCONFIG_SDR_WHITE_LEVEL whiteLevel = {};
@@ -109,7 +104,7 @@ static float getMonitorSDRWhiteLevel(DISPLAYCONFIG_PATH_TARGET_INFO *targetInfo)
     whiteLevel.header.size = sizeof(DISPLAYCONFIG_SDR_WHITE_LEVEL);
     whiteLevel.header.adapterId = targetInfo->adapterId;
     whiteLevel.header.id = targetInfo->id;
-    if (DisplayConfigGetDeviceInfo(&whiteLevel.header) != ERROR_SUCCESS)
+    if (QWindowsApi::instance()->pDisplayConfigGetDeviceInfo(&whiteLevel.header) != ERROR_SUCCESS)
         return defaultSdrWhiteLevel;
     return whiteLevel.SDRWhiteLevel * 80.0 / 1000.0;
 }
@@ -149,7 +144,7 @@ using DevInfoHandle = QUniqueHandle<DevInfoHandleTraits>;
 static void setMonitorDataFromSetupApi(QWindowsScreenData &data,
                                        const std::vector<DISPLAYCONFIG_PATH_INFO> &pathGroup)
 {
-    if (pathGroup.empty()) {
+    if (pathGroup.empty() || !QWindowsApi::instance()->pDisplayConfigGetDeviceInfo) {
         return;
     }
 
@@ -161,7 +156,7 @@ static void setMonitorDataFromSetupApi(QWindowsScreenData &data,
         // The first element in the clone group is the main monitor.
         deviceName.header.adapterId = pathGroup[0].targetInfo.adapterId;
         deviceName.header.id = pathGroup[0].targetInfo.id;
-        if (DisplayConfigGetDeviceInfo(&deviceName.header) == ERROR_SUCCESS) {
+        if (QWindowsApi::instance()->pDisplayConfigGetDeviceInfo(&deviceName.header) == ERROR_SUCCESS) {
             data.devicePath = QString::fromWCharArray(deviceName.monitorDevicePath);
         } else {
             qCWarning(lcQpaScreen)
@@ -182,7 +177,7 @@ static void setMonitorDataFromSetupApi(QWindowsScreenData &data,
         deviceName.header.size = sizeof(DISPLAYCONFIG_TARGET_DEVICE_NAME);
         deviceName.header.adapterId = path.targetInfo.adapterId;
         deviceName.header.id = path.targetInfo.id;
-        if (DisplayConfigGetDeviceInfo(&deviceName.header) != ERROR_SUCCESS) {
+        if (QWindowsApi::instance()->pDisplayConfigGetDeviceInfo(&deviceName.header) != ERROR_SUCCESS) {
             qCWarning(lcQpaScreen)
                     << u"Unable to get device information for %1:"_s.arg(path.targetInfo.id)
                     << QSystemError::windowsString();
@@ -297,8 +292,8 @@ static bool monitorData(HMONITOR hMonitor, QWindowsScreenData *data)
         data->flags |= QWindowsScreenData::LockScreen;
     } else {
         if (const HDC hdc = CreateDC(info.szDevice, nullptr, nullptr, nullptr)) {
-            const QDpi dpi = monitorDPI(hMonitor);
-            data->dpi = dpi.first > 0 ? dpi : deviceDPI(hdc);
+            const UINT dpi = QWindowsContext::getMostPossibleDpiForMonitor(hMonitor);
+            data->dpi = QDpi(dpi, dpi);
             data->depth = GetDeviceCaps(hdc, BITSPIXEL);
             data->format = data->depth == 16 ? QImage::Format_RGB16 : QImage::Format_RGB32;
             data->physicalSizeMM = QSizeF(GetDeviceCaps(hdc, HORZSIZE), GetDeviceCaps(hdc, VERTSIZE));
@@ -591,7 +586,8 @@ QRect QWindowsScreen::virtualGeometry(const QPlatformScreen *screen) // cf QScre
 
 bool QWindowsScreen::setOrientationPreference(Qt::ScreenOrientation o)
 {
-    bool result = false;
+    if (!QWindowsApi::instance()->pSetDisplayAutoRotationPreferences)
+        return false;
     ORIENTATION_PREFERENCE orientationPreference = ORIENTATION_PREFERENCE_NONE;
     switch (o) {
     case Qt::PrimaryOrientation:
@@ -609,33 +605,29 @@ bool QWindowsScreen::setOrientationPreference(Qt::ScreenOrientation o)
         orientationPreference = ORIENTATION_PREFERENCE_LANDSCAPE_FLIPPED;
         break;
     }
-    result = SetDisplayAutoRotationPreferences(orientationPreference);
-    return result;
+    return QWindowsApi::instance()->pSetDisplayAutoRotationPreferences(orientationPreference);
 }
 
 Qt::ScreenOrientation QWindowsScreen::orientationPreference()
 {
-    Qt::ScreenOrientation result = Qt::PrimaryOrientation;
+    if (!QWindowsApi::instance()->pGetDisplayAutoRotationPreferences)
+        return Qt::PrimaryOrientation;
     ORIENTATION_PREFERENCE orientationPreference = ORIENTATION_PREFERENCE_NONE;
-    if (GetDisplayAutoRotationPreferences(&orientationPreference)) {
+    if (QWindowsApi::instance()->pGetDisplayAutoRotationPreferences(&orientationPreference)) {
         switch (orientationPreference) {
         case ORIENTATION_PREFERENCE_NONE:
-            break;
+            return Qt::PrimaryOrientation;
         case ORIENTATION_PREFERENCE_LANDSCAPE:
-            result = Qt::LandscapeOrientation;
-            break;
+            return Qt::LandscapeOrientation;
         case ORIENTATION_PREFERENCE_PORTRAIT:
-            result = Qt::PortraitOrientation;
-            break;
+            return Qt::PortraitOrientation;
         case ORIENTATION_PREFERENCE_LANDSCAPE_FLIPPED:
-            result = Qt::InvertedLandscapeOrientation;
-            break;
+            return Qt::InvertedLandscapeOrientation;
         case ORIENTATION_PREFERENCE_PORTRAIT_FLIPPED:
-            result = Qt::InvertedPortraitOrientation;
-            break;
+            return Qt::InvertedPortraitOrientation;
         }
     }
-    return result;
+    return Qt::PrimaryOrientation;
 }
 
 /*!

@@ -28,8 +28,6 @@
 #ifndef QT_NO_COMPRESS
 #  include <zconf.h>
 #  include <zlib.h>
-#endif
-#if QT_CONFIG(zstd)
 #  include <zstd.h>
 #endif
 
@@ -68,8 +66,6 @@ using namespace Qt::StringLiterals;
 
 #ifndef QT_NO_COMPRESS
 RCC_FEATURE_SYMBOL(Zlib)
-#endif
-#if QT_CONFIG(zstd)
 RCC_FEATURE_SYMBOL(Zstd)
 #endif
 
@@ -427,27 +423,22 @@ qint64 QResourcePrivate::uncompressedSize() const
     switch (compressionAlgo) {
     case QResource::NoCompression:
         return size;
-
-    case QResource::ZlibCompression:
 #ifndef QT_NO_COMPRESS
+    case QResource::ZlibCompression:
         if (size_t(size) >= sizeof(quint32))
             return qFromBigEndian<quint32>(data);
-#else
-        Q_ASSERT(!"QResource: Qt built without support for Zlib compression");
-        Q_UNREACHABLE();
-#endif
         break;
-
     case QResource::ZstdCompression: {
-#if QT_CONFIG(zstd)
-        size_t n = ZSTD_getFrameContentSize(data, size);
+        const size_t n = ZSTD_getFrameContentSize(data, size);
         return ZSTD_isError(n) ? -1 : qint64(n);
-#else
-        // This should not happen because we've refused to load such resource
-        Q_ASSERT(!"QResource: Qt built without support for Zstd compression");
-        Q_UNREACHABLE();
-#endif
     }
+#else
+    case QResource::ZlibCompression:
+    case QResource::ZstdCompression: {
+        Q_ASSERT(!"QResource: Qt built without support for decompression");
+        Q_UNREACHABLE();
+    }
+#endif
     }
     return -1;
 }
@@ -455,7 +446,7 @@ qint64 QResourcePrivate::uncompressedSize() const
 qsizetype QResourcePrivate::decompress(char *buffer, qsizetype bufferSize) const
 {
     Q_ASSERT(data);
-#if defined(QT_NO_COMPRESS) && !QT_CONFIG(zstd)
+#if defined(QT_NO_COMPRESS)
     Q_UNUSED(buffer);
     Q_UNUSED(bufferSize);
 #endif
@@ -464,9 +455,8 @@ qsizetype QResourcePrivate::decompress(char *buffer, qsizetype bufferSize) const
     case QResource::NoCompression:
         Q_UNREACHABLE();
         break;
-
-    case QResource::ZlibCompression: {
 #ifndef QT_NO_COMPRESS
+    case QResource::ZlibCompression: {
         uLong len = uLong(bufferSize);
         int res = ::uncompress(reinterpret_cast<Bytef *>(buffer), &len, data + sizeof(quint32),
                                uLong(size - sizeof(quint32)));
@@ -475,23 +465,22 @@ qsizetype QResourcePrivate::decompress(char *buffer, qsizetype bufferSize) const
             return -1;
         }
         return len;
-#else
-        Q_UNREACHABLE();
-#endif
     }
-
     case QResource::ZstdCompression: {
-#if QT_CONFIG(zstd)
-        size_t usize = ZSTD_decompress(buffer, bufferSize, data, size);
+        const size_t usize = ZSTD_decompress(buffer, bufferSize, data, size);
         if (ZSTD_isError(usize)) {
             qWarning("QResource: error decompressing zstd content: %s", ZSTD_getErrorName(usize));
             return -1;
         }
         return usize;
-#else
-        Q_UNREACHABLE();
-#endif
     }
+#else
+    case QResource::ZlibCompression:
+    case QResource::ZstdCompression: {
+        Q_ASSERT(!"QResource: Qt built without support for decompression");
+        Q_UNREACHABLE();
+    }
+#endif
     }
 
     return -1;
@@ -1103,10 +1092,8 @@ public:
         // And some sanity checking for features
         quint32 acceptableFlags = 0;
 #ifndef QT_NO_COMPRESS
-        acceptableFlags |= Compressed;
+        acceptableFlags |= (Compressed | CompressedZstd);
 #endif
-        if (QT_CONFIG(zstd))
-            acceptableFlags |= CompressedZstd;
         if (file_flags & ~acceptableFlags)
             return false;
 

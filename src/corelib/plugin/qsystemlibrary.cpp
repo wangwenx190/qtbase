@@ -59,8 +59,12 @@ static QString qSystemDirectory()
 
 HINSTANCE QSystemLibrary::load(const wchar_t *libraryName, bool onlySystemDirectory /* = true */)
 {
-    if (onlySystemDirectory)
-        return ::LoadLibraryExW(libraryName, nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+    const QString fileName = QString::fromWCharArray(libraryName);
+
+    if (onlySystemDirectory) {
+        const QString path = qSystemDirectory() + u'\\' + fileName;
+        return ::LoadLibraryW(reinterpret_cast<const wchar_t *>(path.utf16()));
+    }
 
     QStringList searchOrder;
 
@@ -71,8 +75,6 @@ HINSTANCE QSystemLibrary::load(const wchar_t *libraryName, bool onlySystemDirect
 
     const QString PATH(QLatin1StringView(qgetenv("PATH")));
     searchOrder << PATH.split(u';', Qt::SkipEmptyParts);
-
-    const QString fileName = QString::fromWCharArray(libraryName);
 
     // Start looking in the order specified
     for (int i = 0; i < searchOrder.count(); ++i) {

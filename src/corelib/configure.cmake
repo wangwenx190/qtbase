@@ -436,8 +436,6 @@ renameat2(AT_FDCWD, argv[1], AT_FDCWD, argv[2], RENAME_NOREPLACE | RENAME_WHITEO
 # cpp_winrt
 qt_config_compile_test(cpp_winrt
     LABEL "cpp/winrt"
-    LIBRARIES
-        runtimeobject
     CODE
 "// Including winrt/base.h causes an error in some configurations (Windows 10 SDK + c++20)
 #   include <winrt/base.h>

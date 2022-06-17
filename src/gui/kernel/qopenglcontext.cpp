@@ -21,7 +21,14 @@
 
 #include <QDebug>
 
+#ifdef Q_OS_WINDOWS
+#  include <QtCore/private/qsystemlibrary_p.h>
+#  include <dwmapi.h>
+#endif
+
 QT_BEGIN_NAMESPACE
+
+using namespace Qt::StringLiterals;
 
 class QGuiGLThreadContext
 {
@@ -798,8 +805,22 @@ void QOpenGLContext::swapBuffers(QSurface *surface)
     if (!QOpenGLContextPrivate::toggleMakeCurrentTracker(this, false))
         qWarning("QOpenGLContext::swapBuffers() called without corresponding makeCurrent()");
 #endif
-    if (surface->format().swapBehavior() == QSurfaceFormat::SingleBuffer)
+    if (surface->format().swapBehavior() == QSurfaceFormat::SingleBuffer) {
         functions()->glFlush();
+#ifdef Q_OS_WINDOWS
+        // Try to prevent glitches on resizing the window.
+        static const auto pDwmFlush = reinterpret_cast<decltype(&::DwmFlush)>(QSystemLibrary::resolve("dwmapi"_L1, "DwmFlush"));
+        if (pDwmFlush) {
+            pDwmFlush();
+        } else {
+            static bool warnedOnce = false;
+            if (!warnedOnce) {
+                warnedOnce = true;
+                qWarning("QOpenGLContext::swapBuffers(): failed to load DwmFlush().");
+            }
+        }
+#endif // Q_OS_WINDOWS
+    }
     d->platformGLContext->swapBuffers(surfaceHandle);
 }
 

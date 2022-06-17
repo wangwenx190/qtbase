@@ -62,6 +62,16 @@ function(qt_internal_setup_public_platform_target)
     # Generate a pkgconfig for Qt::Platform.
     qt_internal_generate_pkg_config_file(Platform)
 
+    if(MSVC AND CLANG)
+        # Hack for clang-cl: for some unknown reason, the "/EHsc" or "/EHs-c-" flag will always be
+        # missing for some of our CMake targets and that results in compilation failure for static
+        # builds. I tried to disabled exception handling unconditionally for all our targets but it
+        # seems that some code inside Qt really need exception handling and it won't compile at all
+        # if we disable it forcely. So to make everyone happy, I choose to enable exception handling
+        # unconditionally in the end.
+        target_compile_options(Platform INTERFACE "/EHsc" "/GR")
+    endif()
+
     qt_internal_add_sbom(Platform
         TYPE QT_MODULE
         IMMEDIATE_FINALIZATION

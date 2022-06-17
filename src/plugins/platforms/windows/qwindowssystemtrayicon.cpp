@@ -193,7 +193,8 @@ QRect QWindowsSystemTrayIcon::geometry() const
     nid.hWnd = m_hwnd;
     nid.uID = q_uNOTIFYICONID;
     RECT rect;
-    const QRect result = SUCCEEDED(Shell_NotifyIconGetRect(&nid, &rect))
+    const QRect result =
+        SUCCEEDED(QWindowsApi::instance()->pShell_NotifyIconGetRect(&nid, &rect))
         ? QRect(rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top)
         : QRect();
     qCDebug(lcQpaTrayIcon) << __FUNCTION__ << this << "returns" << result;
@@ -269,7 +270,8 @@ bool QWindowsSystemTrayIcon::ensureInstalled()
     if (!MYWM_TASKBARCREATED)
         MYWM_TASKBARCREATED = RegisterWindowMessage(L"TaskbarCreated");
     // Allow the WM_TASKBARCREATED message through the UIPI filter
-    ChangeWindowMessageFilterEx(m_hwnd, MYWM_TASKBARCREATED, MSGFLT_ALLOW, nullptr);
+    if (QWindowsApi::instance()->pChangeWindowMessageFilterEx)
+        QWindowsApi::instance()->pChangeWindowMessageFilterEx(m_hwnd, MYWM_TASKBARCREATED, MSGFLT_ALLOW, nullptr);
     qCDebug(lcQpaTrayIcon) << __FUNCTION__ << this << "MYWM_TASKBARCREATED=" << MYWM_TASKBARCREATED;
 
     QWindowsHwndSystemTrayIconEntry entry{m_hwnd, this};
@@ -312,13 +314,17 @@ bool QWindowsSystemTrayIcon::setIconVisible(bool visible)
 
 bool QWindowsSystemTrayIcon::isIconVisible() const
 {
+    if (!QWindowsApi::instance()->pShell_NotifyIconGetRect) {
+        return false;
+    }
+
     NOTIFYICONIDENTIFIER nid;
     memset(&nid, 0, sizeof(nid));
     nid.cbSize = sizeof(nid);
     nid.hWnd = m_hwnd;
     nid.uID = q_uNOTIFYICONID;
     RECT rect;
-    const HRESULT hr = Shell_NotifyIconGetRect(&nid, &rect);
+    const HRESULT hr = QWindowsApi::instance()->pShell_NotifyIconGetRect(&nid, &rect);
     // Windows 10 returns S_FALSE if the icon is hidden
     if (FAILED(hr) || hr == S_FALSE)
         return false;

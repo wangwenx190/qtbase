@@ -113,15 +113,7 @@ SSL_free(SSL_new(0));
 }
 ")
 
-qt_find_package(WrapZSTD 1.3
-    PROVIDED_TARGETS
-        WrapZSTD::WrapZSTD
-        zstd::libzstd
-        zstd::libzstd_static
-        zstd::libzstd_shared
-    MODULE_NAME global
-    QMAKE_LIB zstd
-)
+qt_find_package(WrapSystemZSTD 1.3 PROVIDED_TARGETS WrapSystemZSTD::WrapSystemZSTD MODULE_NAME global QMAKE_LIB zstd)
 qt_find_package(WrapDBus1 1.2 PROVIDED_TARGETS dbus-1 MODULE_NAME global QMAKE_LIB dbus)
 qt_find_package(Libudev PROVIDED_TARGETS PkgConfig::Libudev MODULE_NAME global QMAKE_LIB libudev)
 qt_find_package(LTTngUST PROVIDED_TARGETS LTTng::UST MODULE_NAME core QMAKE_LIB lttng-ust)
@@ -982,9 +974,9 @@ qt_feature("system-zlib" PRIVATE SYSTEM_LIBRARY
     LABEL "Using system zlib"
     CONDITION WrapSystemZLIB_FOUND
 )
-qt_feature("zstd" PUBLIC
-    LABEL "Zstandard support"
-    CONDITION WrapZSTD_FOUND
+qt_feature("system-zstd" PRIVATE
+    LABEL "Using system ZSTD"
+    CONDITION WrapSystemZSTD_FOUND
 )
 qt_feature("stdlib-libcpp" PRIVATE
     LABEL "Using stdlib=libc++"
@@ -1149,10 +1141,24 @@ qt_feature("relocatable" PRIVATE
 # hardening features
 qt_feature("intelcet" PRIVATE
     LABEL "Using Intel Control-flow Enforcement Technology (CET)"
-    AUTODETECT ON
-    CONDITION TEST_intelcet
+    CONDITION INPUT_intelcet STREQUAL yes
 )
 qt_feature_config("intelcet" QMAKE_PUBLIC_CONFIG)
+qt_feature("cfguard" PRIVATE
+    LABEL "Enable control flow guard"
+    CONDITION INPUT_cfguard STREQUAL yes
+)
+qt_feature_config("cfguard" QMAKE_PUBLIC_CONFIG)
+qt_feature("spectre" PRIVATE
+    LABEL "Mitigate Spectre issues"
+    CONDITION INPUT_spectre STREQUAL yes
+)
+qt_feature_config("spectre" QMAKE_PUBLIC_CONFIG)
+qt_feature("ehcont" PRIVATE
+    LABEL "Enable EHCONT guard"
+    CONDITION INPUT_ehcont STREQUAL yes
+)
+qt_feature_config("ehcont" QMAKE_PUBLIC_CONFIG)
 qt_feature("glibc_fortify_source" PRIVATE
     LABEL "Using Glibc function fortification"
     AUTODETECT ON
@@ -1273,6 +1279,9 @@ qt_configure_add_summary_entry(ARGS "relocatable")
 qt_configure_add_summary_entry(ARGS "precompile_header")
 qt_configure_add_summary_entry(ARGS "ltcg")
 qt_configure_add_summary_entry(ARGS "intelcet")
+qt_configure_add_summary_entry(ARGS "cfguard")
+qt_configure_add_summary_entry(ARGS "spectre")
+qt_configure_add_summary_entry(ARGS "ehcont")
 qt_configure_add_summary_entry(ARGS "glibc_fortify_source")
 qt_configure_add_summary_entry(ARGS "trivial_auto_var_init_pattern")
 qt_configure_add_summary_entry(ARGS "stack_protector")
@@ -1358,7 +1367,7 @@ qt_configure_add_summary_entry(ARGS "openssl-linked")
 qt_configure_add_summary_entry(ARGS "opensslv11")
 qt_configure_add_summary_entry(ARGS "opensslv30")
 qt_configure_add_summary_entry(ARGS "system-zlib")
-qt_configure_add_summary_entry(ARGS "zstd")
+qt_configure_add_summary_entry(ARGS "system-zstd")
 qt_configure_add_summary_entry(ARGS "thread")
 qt_configure_end_summary_section() # end of "Support enabled for" section
 qt_configure_add_report_entry(

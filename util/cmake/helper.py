@@ -346,6 +346,7 @@ _qt_library_map = [
     LibraryMapping("axcontainer", "Qt6", "Qt::AxContainer", components=["AxContainer"]),
     LibraryMapping("webkitwidgets", "Qt6", "Qt::WebKitWidgets", components=["WebKitWidgets"]),
     LibraryMapping("zlib", "Qt6", "Qt::Zlib", components=["Zlib"]),
+    LibraryMapping("zstd", "Qt6", "Qt::ZSTD", components=["ZSTD"]),
     LibraryMapping("httpserver", "Qt6", "Qt::HttpServer", components=["HttpServer"]),
     LibraryMapping("sslserver", "Qt6", "Qt::SslServer", components=["HttpServer"]),
 ]

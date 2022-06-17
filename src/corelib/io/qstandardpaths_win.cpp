@@ -7,7 +7,8 @@
 #include <qstringlist.h>
 
 #ifndef QT_BOOTSTRAPPED
-#include <qcoreapplication.h>
+#  include <qcoreapplication.h>
+#  include <qoperatingsystemversion.h>
 #endif
 
 #include <qt_windows.h>
@@ -60,8 +61,15 @@ static inline void appendTestMode(QString &path)
 
 static bool isProcessLowIntegrity()
 {
+#ifdef QT_BOOTSTRAPPED
+    return false;
+#else
+    if (!QOperatingSystemVersion::isWin8OrGreater())
+        return false;
+#endif
+
     // same as GetCurrentProcessToken()
-    const auto process_token = HANDLE(quintptr(-4));
+    static const auto process_token = HANDLE(quintptr(-4));
 
     QVarLengthArray<char,256> token_info_buf(256);
     auto* token_info = reinterpret_cast<TOKEN_MANDATORY_LABEL*>(token_info_buf.data());

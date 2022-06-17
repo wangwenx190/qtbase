@@ -730,21 +730,10 @@ static inline QString messageKeyText(const MSG &msg)
     return ch.isNull() ? QString() : QString(ch);
 }
 
-[[nodiscard]] static inline int getTitleBarHeight(const HWND hwnd)
-{
-    const UINT dpi = GetDpiForWindow(hwnd);
-    const int captionHeight = GetSystemMetricsForDpi(SM_CYCAPTION, dpi);
-    if (IsZoomed(hwnd))
-        return captionHeight;
-    // The frame height should also be taken into account if the window
-    // is not maximized.
-    const int frameHeight = GetSystemMetricsForDpi(SM_CYSIZEFRAME, dpi)
-                            + GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi);
-    return captionHeight + frameHeight;
-}
-
 [[nodiscard]] static inline bool isSystemMenuOffsetNeeded(const Qt::WindowFlags flags)
 {
+    if (qEnvironmentVariableIntValue("QT_WINDOWS_SYSTEM_MENU_NEED_OFFSET"))
+        return true;
     static constexpr const Qt::WindowFlags titleBarHints =
         Qt::WindowMinMaxButtonsHint | Qt::WindowCloseButtonHint | Qt::WindowContextHelpButtonHint;
     return (flags & Qt::WindowSystemMenuHint) && (flags & Qt::WindowTitleHint) && !(flags & titleBarHints)
@@ -785,7 +774,8 @@ static void showSystemMenu(QWindow* w)
 #undef disabled
 
     const QPoint pos = QHighDpi::toNativePixels(topLevel->geometry().topLeft(), topLevel);
-    const int titleBarOffset = isSystemMenuOffsetNeeded(topLevel->flags()) ? getTitleBarHeight(topLevelHwnd) : 0;
+    const int titleBarOffset = isSystemMenuOffsetNeeded(topLevel->flags())
+        ? QWindowsContext::getTitleBarHeight(topLevelHwnd) : 0;
     const int ret = TrackPopupMenuEx(menu,
                                TPM_LEFTALIGN | TPM_TOPALIGN | TPM_NONOTIFY | TPM_RETURNCMD,
                                pos.x(), pos.y() + titleBarOffset,

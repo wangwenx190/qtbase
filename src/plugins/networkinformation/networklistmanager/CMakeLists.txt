@@ -16,7 +16,6 @@ qt_internal_add_plugin(QNLMNIPlugin
 
 qt_internal_extend_target(QNLMNIPlugin CONDITION WIN32
     LIBRARIES
-        runtimeobject
         oleaut32
 )
 

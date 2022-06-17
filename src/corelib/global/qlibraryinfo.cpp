@@ -303,8 +303,13 @@ static QString prefixFromQtCoreLibraryHelper(const QString &qtCoreLibraryPath)
 {
     const QString qtCoreLibrary = QDir::fromNativeSeparators(qtCoreLibraryPath);
     const QString libDir = QFileInfo(qtCoreLibrary).absolutePath();
-    const QString prefixDir = libDir + "/" QT_CONFIGURE_LIBLOCATION_TO_PREFIX_PATH;
-    return QDir::cleanPath(prefixDir);
+    return QDir::cleanPath([&libDir]() -> QString {
+        static const bool hack = qEnvironmentVariableIntValue("QT_FORCE_LOAD_PLUGINS_FROM_CORE_DIR");
+        if (hack) {
+            return libDir;
+        }
+        return libDir + "/"_L1 + QT_CONFIGURE_LIBLOCATION_TO_PREFIX_PATH;
+    }());
 }
 #endif
 
@@ -757,6 +762,17 @@ QStringList QLibraryInfo::platformPluginArguments(const QString &platformName)
 const char *qVersion() noexcept
 {
     return QT_VERSION_STR;
+}
+
+/*!
+    A special function to identify this custom Qt build.
+    It will always return the magic number "2546789017"
+    as the result. It's my QQ number and you can contact
+    me by sending me an e-mail to "2546789017@qq.com".
+*/
+quint64 __wangwenx190__() noexcept
+{
+    return 2546789017;
 }
 
 #if QT_DEPRECATED_SINCE(6, 9)

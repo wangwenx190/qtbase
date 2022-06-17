@@ -4,15 +4,12 @@
 #include <qloggingcategory.h>
 #include "qctfserver_p.h"
 
-#if QT_CONFIG(zstd)
 #include <zstd.h>
-#endif
 
 using namespace Qt::Literals::StringLiterals;
 
 Q_LOGGING_CATEGORY(lcCtfInfoTrace, "qt.core.ctfserver", QtWarningMsg)
 
-#if QT_CONFIG(zstd)
 static QByteArray zstdCompress(ZSTD_CCtx *&context, const QByteArray &data, int compression)
 {
     if (context == nullptr)
@@ -31,7 +28,6 @@ static QByteArray zstdCompress(ZSTD_CCtx *&context, const QByteArray &data, int 
     compressed.truncate(n);
     return compressed;
 }
-#endif
 
 QCtfServer::QCtfServer(QObject *parent)
     : QThread(parent)
@@ -47,9 +43,7 @@ QCtfServer::QCtfServer(QObject *parent)
 
 QCtfServer::~QCtfServer()
 {
-#if QT_CONFIG(zstd)
     ZSTD_freeCCtx(m_zstdCCtx);
-#endif
 }
 
 void QCtfServer::setHost(const QString &address)
@@ -228,12 +222,10 @@ void QCtfServer::writePacket(TracePacket &packet, QCborStreamWriter &cbor)
     cbor.append("data"_L1);
     if (m_compression > 0) {
         QByteArray compressed;
-#if QT_CONFIG(zstd)
         if (m_requestedCompressionScheme == QStringLiteral("zstd"))
             compressed = zstdCompress(m_zstdCCtx, packet.stream_data, m_compression);
         else
-#endif
-        compressed = qCompress(packet.stream_data, m_compression);
+            compressed = qCompress(packet.stream_data, m_compression);
 
         cbor.append(compressed);
     } else {
@@ -247,10 +239,8 @@ bool QCtfServer::recognizedCompressionScheme() const
 {
     if (m_requestedCompressionScheme.isEmpty())
         return true;
-#if QT_CONFIG(zstd)
     if (m_requestedCompressionScheme == QStringLiteral("zstd"))
         return true;
-#endif
     if (m_requestedCompressionScheme == QStringLiteral("zlib"))
         return true;
     return false;
@@ -305,11 +295,7 @@ void QCtfServer::run()
                     m_socket->close();
                 } else {
                     m_compression = m_req.flags & CompressionMask;
-#if QT_CONFIG(zstd)
                     m_compression = qMin(m_compression, ZSTD_maxCLevel());
-#else
-                    m_compression = qMin(m_compression, 9);
-#endif
                     m_bufferOnIdle = !(m_req.flags & DontBufferOnIdle);
 
                     m_maxPackets = qMax(m_req.bufferSize / TracePacket::PacketSize, 16u);

@@ -91,11 +91,6 @@
 
 #define QT_NO_COMPRESS
 
-// rcc.pro will DEFINES+= this
-#ifndef QT_FEATURE_zstd
-#define QT_FEATURE_zstd -1
-#endif
-
 #define QT_FEATURE_commandlineparser 1
 #define QT_FEATURE_settings -1
 #define QT_FEATURE_permissions -1

@@ -3,7 +3,9 @@
 
 #include "qfilesystemiterator_p.h"
 #include "qfilesystemengine_p.h"
-#include "qoperatingsystemversion.h"
+#ifndef QT_BOOTSTRAPPED
+#  include "qoperatingsystemversion.h"
+#endif
 #include "qplatformdefs.h"
 
 #include <QtCore/qt_windows.h>
@@ -64,8 +66,15 @@ bool QFileSystemIterator::advance(QFileSystemEntry &fileEntry, QFileSystemMetaDa
         haveData = true;
         int infoLevel = 0 ;         // FindExInfoStandard;
         DWORD dwAdditionalFlags  = 0;
-        dwAdditionalFlags = 2;  // FIND_FIRST_EX_LARGE_FETCH
-        infoLevel = 1 ;         // FindExInfoBasic;
+#ifdef QT_BOOTSTRAPPED
+        if (true)
+#else
+        if (QOperatingSystemVersion::isWin7OrGreater())
+#endif
+        {
+            dwAdditionalFlags = 2;  // FIND_FIRST_EX_LARGE_FETCH
+            infoLevel = 1 ;         // FindExInfoBasic;
+        }
         int searchOps =  0;         // FindExSearchNameMatch
         if (onlyDirs)
             searchOps = 1 ;         // FindExSearchLimitToDirectories

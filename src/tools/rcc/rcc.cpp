@@ -19,9 +19,7 @@
 
 #include <algorithm>
 
-#if QT_CONFIG(zstd)
-#  include <zstd.h>
-#endif
+#include <zstd.h>
 
 // Note: A copy of this file is used in Qt Widgets Designer (qttools/src/designer/src/lib/shared/rcc.cpp)
 
@@ -296,10 +294,10 @@ qint64 RCCFileInfo::writeDataBlob(RCCResourceLibrary &lib,
 
     // Check if compression is useful for this file
     if (data.size() != 0) {
-#if QT_CONFIG(zstd)
+#ifndef QT_NO_COMPRESS
         if (m_compressAlgo == RCCResourceLibrary::CompressionAlgorithm::Best && !m_noZstd) {
             m_compressAlgo = RCCResourceLibrary::CompressionAlgorithm::Zstd;
-            m_compressLevel = 19;   // not ZSTD_maxCLevel(), as 20+ are experimental
+            m_compressLevel = ZSTD_maxCLevel();
         }
         if (m_compressAlgo == RCCResourceLibrary::CompressionAlgorithm::Zstd && !m_noZstd) {
             if (lib.m_zstdCCtx == nullptr)
@@ -342,12 +340,6 @@ qint64 RCCFileInfo::writeDataBlob(RCCResourceLibrary &lib,
                 QString msg = QString::fromLatin1("%1: note: not compressed\n").arg(m_name);
                 lib.m_errorDevice->write(msg.toUtf8());
             }
-        }
-#endif
-#ifndef QT_NO_COMPRESS
-        if (m_compressAlgo == RCCResourceLibrary::CompressionAlgorithm::Best) {
-            m_compressAlgo = RCCResourceLibrary::CompressionAlgorithm::Zlib;
-            m_compressLevel = 9;
         }
         if (m_compressAlgo == RCCResourceLibrary::CompressionAlgorithm::Zlib) {
             QByteArray compressed =
@@ -505,17 +497,13 @@ RCCResourceLibrary::RCCResourceLibrary(quint8 formatVersion)
     m_noZstd(false)
 {
     m_out.reserve(30 * 1000 * 1000);
-#if QT_CONFIG(zstd)
     m_zstdCCtx = nullptr;
-#endif
 }
 
 RCCResourceLibrary::~RCCResourceLibrary()
 {
     delete m_root;
-#if QT_CONFIG(zstd)
     ZSTD_freeCCtx(m_zstdCCtx);
-#endif
 }
 
 enum RCCXmlTag {
@@ -933,10 +921,10 @@ RCCResourceLibrary::CompressionAlgorithm RCCResourceLibrary::parseCompressionAlg
         return CompressionAlgorithm::Zlib;
 #endif
     } else if (value == "zstd"_L1) {
-#if QT_CONFIG(zstd)
-        return CompressionAlgorithm::Zstd;
-#else
+#ifdef QT_NO_COMPRESS
         *errorMsg = "Zstandard support not compiled in"_L1;
+#else
+        return CompressionAlgorithm::Zstd;
 #endif
     } else if (value != "none"_L1) {
         *errorMsg = QString::fromLatin1("Unknown compression algorithm '%1'").arg(value);
@@ -959,10 +947,8 @@ int RCCResourceLibrary::parseCompressionLevel(CompressionAlgorithm algo, const Q
                 return c;
             break;
         case CompressionAlgorithm::Zstd:
-#if QT_CONFIG(zstd)
             if (c >= 0 && c <= ZSTD_maxCLevel())
                 return c;
-#endif
             break;
         }
     }
@@ -1203,7 +1189,7 @@ bool RCCResourceLibrary::writeDataBlobs()
     Q_ASSERT(m_errorDevice);
     switch (m_format) {
     case C_Code:
-        writeString("static const unsigned char qt_resource_data[] = {\n");
+        writeString("static constexpr const unsigned char qt_resource_data[] = {\n");
         break;
     case Python_Code:
         writeString("qt_resource_data = b\"\\\n");
@@ -1249,7 +1235,7 @@ bool RCCResourceLibrary::writeDataBlobs()
     case Pass1:
         if (offset < 8)
             offset = 8;
-        writeString("\nstatic const unsigned char qt_resource_data[");
+        writeString("\nstatic constexpr const unsigned char qt_resource_data[");
         writeByteArray(QByteArray::number(offset));
         writeString("] = { 'Q', 'R', 'C', '_', 'D', 'A', 'T', 'A' };\n\n");
         break;
@@ -1264,7 +1250,7 @@ bool RCCResourceLibrary::writeDataNames()
     switch (m_format) {
     case C_Code:
     case Pass1:
-        writeString("static const unsigned char qt_resource_name[] = {\n");
+        writeString("static constexpr const unsigned char qt_resource_name[] = {\n");
         break;
     case Python_Code:
         writeString("qt_resource_name = b\"\\\n");
@@ -1326,7 +1312,7 @@ bool RCCResourceLibrary::writeDataStructure()
     switch (m_format) {
     case C_Code:
     case Pass1:
-        writeString("static const unsigned char qt_resource_struct[] = {\n");
+        writeString("static constexpr const unsigned char qt_resource_struct[] = {\n");
         break;
     case Python_Code:
         writeString("qt_resource_struct = b\"\\\n");

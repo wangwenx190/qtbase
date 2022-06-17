@@ -96,8 +96,7 @@ public:
             return false;
         }
 
-        hr = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory),
-                                 static_cast<IUnknown **>(&directWriteFactory));
+        hr = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, IID_PPV_ARGS(&directWriteFactory));
         if (FAILED(hr)) {
             qWarning("%s: Could not create DirectWrite factory: %#lx", __FUNCTION__, hr);
             return false;

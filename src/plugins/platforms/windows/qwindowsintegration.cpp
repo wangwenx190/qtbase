@@ -173,6 +173,8 @@ static inline unsigned parseOptions(const QStringList &paramList,
             options |= QWindowsIntegration::AlwaysUseNativeMenus;
         } else if (param == u"menus=none") {
             options |= QWindowsIntegration::NoNativeMenus;
+        } else if (param == u"nowmpointer") {
+            options |= QWindowsIntegration::DontUseWMPointer;
         } else if (param == u"reverse") {
             options |= QWindowsIntegration::RtlEnabled;
         } else if (param == u"darkmode=0") {
@@ -195,8 +197,12 @@ void QWindowsIntegrationPrivate::parseOptions(QWindowsIntegration *q, const QStr
     initOpenGlBlacklistResources();
 
     static bool dpiAwarenessSet = false;
+    static const bool hasDpiAwarenessContext =
+            QWindowsApi::instance()->pSetProcessDpiAwarenessContext != nullptr;
     // Default to per-monitor-v2 awareness (if available)
-    QtWindows::DpiAwareness dpiAwareness = QtWindows::DpiAwareness::PerMonitorVersion2;
+    QtWindows::DpiAwareness dpiAwareness = hasDpiAwarenessContext
+            ? QtWindows::DpiAwareness::PerMonitorVersion2
+            : QtWindows::DpiAwareness::PerMonitor;
 
     int tabletAbsoluteRange = -1;
     DarkModeHandling darkModeHandling = DarkModeHandlingFlag::DarkModeWindowFrames
@@ -207,12 +213,19 @@ void QWindowsIntegrationPrivate::parseOptions(QWindowsIntegration *q, const QStr
     if (tabletAbsoluteRange >= 0)
         QWindowsContext::setTabletAbsoluteRange(tabletAbsoluteRange);
 
-    QCoreApplication::setAttribute(Qt::AA_CompressHighFrequencyEvents);
+    if (m_context.initPointer(m_options))
+        QCoreApplication::setAttribute(Qt::AA_CompressHighFrequencyEvents);
+    else
+        m_context.initTablet();
     QWindowSystemInterfacePrivate::TabletEvent::setPlatformSynthesizesMouse(false);
 
     if (!dpiAwarenessSet) { // Set only once in case of repeated instantiations of QGuiApplication.
         if (!QCoreApplication::testAttribute(Qt::AA_PluginApplication)) {
-            m_context.setProcessDpiAwareness(dpiAwareness);
+            for (auto i = int(dpiAwareness); i != int(QtWindows::DpiAwareness::Invalid); --i) {
+                if (m_context.setProcessDpiAwareness(QtWindows::DpiAwareness(i))) {
+                    break;
+                }
+            }
             qCDebug(lcQpaWindow) << "DpiAwareness=" << dpiAwareness
                 << "effective process DPI awareness=" << QWindowsContext::processDpiAwareness();
         }

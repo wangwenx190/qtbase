@@ -163,10 +163,15 @@ static inline QString windowsDisplayVersion()
 {
     // https://tickets.puppetlabs.com/browse/FACT-3058
     // The "ReleaseId" key stopped updating since Windows 10 20H2.
-    if (QOperatingSystemVersion::current() >= QOperatingSystemVersion::Windows10_20H2)
+    if (QOperatingSystemVersion::isWin1020H2OrGreater())
         return readVersionRegistryString(L"DisplayVersion");
     else
         return readVersionRegistryString(L"ReleaseId");
+}
+
+static QString windows7Build()
+{
+    return readVersionRegistryString(L"CurrentBuild");
 }
 
 static QString winSp_helper()
@@ -192,6 +197,14 @@ static const char *osVer_helper(QOperatingSystemVersion version = QOperatingSyst
 
 #define Q_WINVER(major, minor) (major << 8 | minor)
     switch (Q_WINVER(osver.dwMajorVersion, osver.dwMinorVersion)) {
+    case Q_WINVER(6, 0):
+        return workstation ? "Vista" : "Server 2008";
+    case Q_WINVER(6, 1):
+        return workstation ? "7" : "Server 2008 R2";
+    case Q_WINVER(6, 2):
+        return workstation ? "8" : "Server 2012";
+    case Q_WINVER(6, 3):
+        return workstation ? "8.1" : "Server 2012 R2";
     case Q_WINVER(10, 0):
         if (workstation) {
             if (osver.dwBuildNumber >= 22000)
@@ -908,10 +921,21 @@ QString QSysInfo::prettyProductName()
     return result + " ("_L1 + versionString + u')';
 #  else
     // (resembling winver.exe): Windows 10 "Windows 10 Version 1809"
-    const auto displayVersion = windowsDisplayVersion();
-    if (!displayVersion.isEmpty())
-        result += " Version "_L1 + displayVersion;
-    return result;
+    if (majorVersion >= 10) {
+        const auto displayVersion = windowsDisplayVersion();
+        if (!displayVersion.isEmpty())
+            result += " Version "_L1 + displayVersion;
+        return result;
+    }
+    // Windows 7: "Windows 7 Version 6.1 (Build 7601: Service Pack 1)"
+    result += " Version "_L1 + versionString + " ("_L1;
+    const auto build = windows7Build();
+    if (!build.isEmpty())
+        result += "Build "_L1 + build;
+    const auto servicePack = winSp_helper();
+    if (!servicePack.isEmpty())
+        result += ": "_L1 + servicePack;
+    return result + u')';
 #  endif // Windows
 #elif defined(Q_OS_HAIKU)
     return "Haiku "_L1 + productVersion();

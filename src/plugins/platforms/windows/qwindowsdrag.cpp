@@ -11,7 +11,7 @@
 #include "qwindowsintegration.h"
 #include "qwindowsdropdataobject.h"
 #include "qwindowswindow.h"
-#include "qwindowspointerhandler.h"
+#include "qwindowsmousehandler.h"
 #include "qwindowscursor.h"
 #include "qwindowskeymapper.h"
 
@@ -342,7 +342,7 @@ QWindowsOleDropSource::QueryContinueDrag(BOOL fEscapePressed, DWORD grfKeyState)
     // In some rare cases, when a mouse button is released but the mouse is static,
     // grfKeyState will not be updated with these released buttons until the mouse
     // is moved. So we use the async key state given by queryMouseButtons() instead.
-    Qt::MouseButtons buttons = QWindowsPointerHandler::queryMouseButtons();
+    Qt::MouseButtons buttons = QWindowsMouseHandler::queryMouseButtons();
 
     SCODE result = S_OK;
     if (fEscapePressed || QWindowsDrag::isCanceled()) {
@@ -367,7 +367,7 @@ QWindowsOleDropSource::QueryContinueDrag(BOOL fEscapePressed, DWORD grfKeyState)
                 const QPoint localPos = m_windowUnderMouse->handle()->mapFromGlobal(globalPos);
                 QWindowSystemInterface::handleMouseEvent(m_windowUnderMouse.data(),
                                                          QPointF(localPos), QPointF(globalPos),
-                                                         QWindowsPointerHandler::queryMouseButtons(),
+                                                         QWindowsMouseHandler::queryMouseButtons(),
                                                          Qt::LeftButton, QEvent::MouseButtonRelease);
             }
             m_currentButtons = Qt::NoButton;
@@ -461,7 +461,7 @@ void QWindowsOleDropTarget::handleDrag(QWindow *window, DWORD grfKeyState,
     const Qt::DropActions actions = translateToQDragDropActions(*pdwEffect);
 
     lastModifiers = toQtKeyboardModifiers(grfKeyState);
-    lastButtons = QWindowsPointerHandler::queryMouseButtons();
+    lastButtons = QWindowsMouseHandler::queryMouseButtons();
 
     const QPlatformDragQtResponse response =
           QWindowSystemInterface::handleDrag(window, windowsDrag->dropData(),
@@ -531,7 +531,7 @@ QWindowsOleDropTarget::DragLeave() noexcept
 
     const auto *keyMapper = QWindowsContext::instance()->keyMapper();
     lastModifiers = keyMapper->queryKeyboardModifiers();
-    lastButtons = QWindowsPointerHandler::queryMouseButtons();
+    lastButtons = QWindowsMouseHandler::queryMouseButtons();
 
     QWindowSystemInterface::handleDrag(m_window, nullptr, QPoint(), Qt::IgnoreAction,
                                        Qt::NoButton, Qt::NoModifier);
@@ -560,7 +560,7 @@ QWindowsOleDropTarget::Drop(LPDATAOBJECT pDataObj, DWORD grfKeyState,
     QWindowsDrag *windowsDrag = QWindowsDrag::instance();
 
     lastModifiers = toQtKeyboardModifiers(grfKeyState);
-    lastButtons = QWindowsPointerHandler::queryMouseButtons();
+    lastButtons = QWindowsMouseHandler::queryMouseButtons();
 
     const QPlatformDropQtResponse response =
         QWindowSystemInterface::handleDrop(m_window, windowsDrag->dropData(),
@@ -669,12 +669,13 @@ static HRESULT startDoDragDrop(LPDATAOBJECT pDataObj, LPDROPSOURCE pDropSource, 
                 return ::DoDragDrop(pDataObj, pDropSource, dwOKEffects, pdwEffect);
             }
 
-            if (msg.message == WM_POINTERUPDATE) {
+            static const bool pointerApiSupported = QWindowsApi::instance()->supportsPointerApi();
+            if (msg.message == WM_POINTERUPDATE && pointerApiSupported) {
 
                 const quint32 pointerId = GET_POINTERID_WPARAM(msg.wParam);
 
                 POINTER_INFO pointerInfo{};
-                if (!GetPointerInfo(pointerId, &pointerInfo))
+                if (!QWindowsApi::instance()->pGetPointerInfo(pointerId, &pointerInfo))
                     return E_FAIL;
 
                 if (pointerInfo.pointerFlags & POINTER_FLAG_PRIMARY) {
@@ -718,7 +719,7 @@ static HRESULT startDoDragDrop(LPDATAOBJECT pDataObj, LPDROPSOURCE pDropSource, 
                 // Handle other messages.
                 qWindowsWndProc(msg.hwnd, msg.message, msg.wParam, msg.lParam);
 
-                if (msg.message == WM_POINTERLEAVE)
+                if (msg.message == WM_POINTERLEAVE && pointerApiSupported)
                     return E_FAIL;
             }
         } else {

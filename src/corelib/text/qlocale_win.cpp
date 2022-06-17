@@ -17,6 +17,7 @@
 // TODO QTBUG-121193: port away from the use of LCID to always use names.
 #include <qt_windows.h>
 #include <time.h>
+#include <qoperatingsystemversion.h>
 
 #if QT_CONFIG(cpp_winrt)
 #   include <QtCore/private/qt_winrtbase_p.h>
@@ -699,17 +700,19 @@ QVariant QSystemLocalePrivate::uiLanguages()
 {
     QStringList result;
 #if QT_CONFIG(cpp_winrt)
-    using namespace winrt;
-    using namespace Windows::System::UserProfile;
-    QT_TRY {
-        auto languages = GlobalizationPreferences::Languages();
-        for (const auto &lang : languages)
-            result << QString::fromStdString(winrt::to_string(lang));
-    } QT_CATCH(...) {
-        // pass, just fall back to WIN32 API implementation
+    if (QOperatingSystemVersion::isWin10OrGreater()) {
+        using namespace winrt;
+        using namespace Windows::System::UserProfile;
+        QT_TRY {
+            const auto languages = GlobalizationPreferences::Languages();
+            for (auto &&lang : languages)
+                result << QString::fromStdString(winrt::to_string(lang));
+        } QT_CATCH(...) {
+            // pass, just fall back to WIN32 API implementation
+        }
+        if (!result.isEmpty())
+            return result; // else just fall back to WIN32 API implementation
     }
-    if (!result.isEmpty())
-        return result; // else just fall back to WIN32 API implementation
 #endif // QT_CONFIG(cpp_winrt)
     // mingw and clang still have to use Win32 API
     unsigned long cnt = 0;

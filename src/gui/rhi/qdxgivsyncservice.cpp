@@ -10,10 +10,13 @@
 #include <QScreen>
 #include <QVarLengthArray>
 #include <QtCore/private/qsystemerror_p.h>
+#include <QtCore/private/qsystemlibrary_p.h>
 
 QT_BEGIN_NAMESPACE
 
 Q_STATIC_LOGGING_CATEGORY(lcQpaScreenUpdates, "qt.qpa.screen.updates", QtCriticalMsg);
+
+using namespace Qt::StringLiterals;
 
 class QDxgiVSyncThread : public QThread
 {
@@ -182,7 +185,15 @@ void QDxgiVSyncService::refAdapter(LUID luid)
         return;
 
     if (!dxgiFactory) {
-        HRESULT hr = CreateDXGIFactory2(0, __uuidof(IDXGIFactory2), reinterpret_cast<void **>(&dxgiFactory));
+        static const auto pCreateDXGIFactory2 =
+            reinterpret_cast<decltype(&::CreateDXGIFactory2)>(
+                QSystemLibrary::resolve("dxgi"_L1, "CreateDXGIFactory2"));
+        if (!pCreateDXGIFactory2) {
+            disableService = true;
+            qWarning("QDxgiVSyncService: CreateDXGIFactory2 is not available on current platform.");
+            return;
+        }
+        HRESULT hr = pCreateDXGIFactory2(0, IID_PPV_ARGS(&dxgiFactory));
         if (FAILED(hr)) {
             disableService = true;
             qWarning("QDxgiVSyncService: CreateDXGIFactory2 failed: %s", qPrintable(QSystemError::windowsComString(hr)));

@@ -345,13 +345,7 @@ function(qt6_android_generate_deployment_settings target)
         _qt_internal_apk_dependencies "_qt_android_extra_library_dirs"
     )
 
-    if(QT_FEATURE_zstd)
-        set(is_zstd_enabled "true")
-    else()
-        set(is_zstd_enabled "false")
-    endif()
-    string(APPEND file_contents
-        "   \"zstdCompression\": ${is_zstd_enabled},\n")
+    string(APPEND file_contents "   \"zstdCompression\": true,\n")
 
     if(QT_ANDROID_GENERATE_JAVA_QTQUICKVIEW_CONTENTS)
         set(is_generate_java_qtquickview_contents "true")

@@ -1152,6 +1152,7 @@ bool TlsCryptographSchannel::acquireCredentialsHandle()
     if (!ciphers.isEmpty())
         cryptoSettings = cryptoSettingsForCiphers(ciphers);
 
+    void *credentials = nullptr;
     TLS_PARAMETERS tlsParameters = {
         0,
         nullptr,
@@ -1160,32 +1161,59 @@ bool TlsCryptographSchannel::acquireCredentialsHandle()
         (cryptoSettings.isEmpty() ? nullptr : cryptoSettings.data()),
         0
     };
-
-    SCH_CREDENTIALS credentials = {
-        SCH_CREDENTIALS_VERSION,
-        0,
-        certsCount,
-        &localCertContext,
-        nullptr,
-        0,
-        nullptr,
-        0,
-        SCH_CRED_REVOCATION_CHECK_CHAIN_EXCLUDE_ROOT | defaultCredsFlag(),
-        1,
-        &tlsParameters
-    };
+    if (supportsTls13()) {
+        SCH_CREDENTIALS *cred = new SCH_CREDENTIALS{
+            SCH_CREDENTIALS_VERSION,
+            0,
+            certsCount,
+            &localCertContext,
+            nullptr,
+            0,
+            nullptr,
+            0,
+            SCH_CRED_REVOCATION_CHECK_CHAIN_EXCLUDE_ROOT | defaultCredsFlag(),
+            1,
+            &tlsParameters
+        };
+        credentials = cred;
+    } else {
+        SCHANNEL_CRED *cred = new SCHANNEL_CRED{
+            SCHANNEL_CRED_VERSION, // dwVersion
+            certsCount, // cCreds
+            &localCertContext, // paCred (certificate(s) containing a private key for authentication)
+            nullptr, // hRootStore
+            0, // cMappers (reserved)
+            nullptr, // aphMappers (reserved)
+            0, // cSupportedAlgs
+            nullptr, // palgSupportedAlgs (nullptr = system default)
+            protocols, // grbitEnabledProtocols
+            0, // dwMinimumCipherStrength (0 = system default)
+            0, // dwMaximumCipherStrength (0 = system default)
+            0, // dwSessionLifespan (0 = schannel default, 10 hours)
+            SCH_CRED_REVOCATION_CHECK_CHAIN_EXCLUDE_ROOT | defaultCredsFlag(), // dwFlags
+            0 // dwCredFormat (must be 0)
+        };
+        credentials = cred;
+    }
+    Q_ASSERT(credentials != nullptr);
 
     TimeStamp expiration{};
     auto status = AcquireCredentialsHandle(nullptr, // pszPrincipal (unused)
                                            const_cast<wchar_t *>(UNISP_NAME), // pszPackage
                                            isClient ? SECPKG_CRED_OUTBOUND : SECPKG_CRED_INBOUND, // fCredentialUse
                                            nullptr, // pvLogonID (unused)
-                                           &credentials, // pAuthData
+                                           credentials, // pAuthData
                                            nullptr, // pGetKeyFn (unused)
                                            nullptr, // pvGetKeyArgument (unused)
                                            &credentialHandle, // phCredential
                                            &expiration // ptsExpir
     );
+
+    if (supportsTls13()) {
+        delete static_cast<SCH_CREDENTIALS *>(credentials);
+    } else {
+        delete static_cast<SCHANNEL_CRED *>(credentials);
+    }
 
     if (status != SEC_E_OK) {
         setErrorAndEmit(d, QAbstractSocket::SslInternalError, schannelErrorToString(status));

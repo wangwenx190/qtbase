@@ -6,6 +6,7 @@
 
 #include <QtCore/QThreadStorage>
 #include <QtCore/QtEndian>
+#include <QtCore/private/qsystemlibrary_p.h>
 
 #if QT_CONFIG(directwrite)
 #  if QT_CONFIG(directwrite3)
@@ -561,32 +562,38 @@ bool QWindowsFontDatabaseBase::init(QSharedPointer<QWindowsFontEngineData> d)
 #if QT_CONFIG(directwrite) && QT_CONFIG(direct2d)
 void QWindowsFontDatabaseBase::createDirectWriteFactory(IDWriteFactory **factory)
 {
+    static const auto pDWriteCreateFactory =
+        reinterpret_cast<decltype(&::DWriteCreateFactory)>(
+            QSystemLibrary::resolve(u"dwrite"_s, "DWriteCreateFactory"));
+    if (!pDWriteCreateFactory)
+        return;
+
     *factory = nullptr;
     IUnknown *result = nullptr;
 
 #  if QT_CONFIG(directwrite3)
     qCDebug(lcQpaFonts) << "Trying to create IDWriteFactory6";
-    DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory6), &result);
+    pDWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory6), &result);
 
     if (result == nullptr) {
         qCDebug(lcQpaFonts) << "Trying to create IDWriteFactory5";
-        DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory5), &result);
+        pDWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory5), &result);
     }
 
     if (result == nullptr) {
         qCDebug(lcQpaFonts) << "Trying to create IDWriteFactory3";
-        DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory3), &result);
+        pDWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory3), &result);
     }
 #  endif
 
     if (result == nullptr) {
         qCDebug(lcQpaFonts) << "Trying to create IDWriteFactory2";
-        DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory2), &result);
+        pDWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory2), &result);
     }
 
     if (result == nullptr) {
         qCDebug(lcQpaFonts) << "Trying to create plain IDWriteFactory";
-        if (FAILED(DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), &result))) {
+        if (FAILED(pDWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), &result))) {
             qErrnoWarning("DWriteCreateFactory failed");
             return;
         }
@@ -715,7 +722,13 @@ QFont QWindowsFontDatabaseBase::systemDefaultFont()
     // Qt 6: Obtain default GUI font (typically "Segoe UI, 9pt", see QTBUG-58610)
     NONCLIENTMETRICS ncm = {};
     ncm.cbSize = sizeof(ncm);
-    SystemParametersInfoForDpi(SPI_GETNONCLIENTMETRICS, ncm.cbSize, &ncm, 0, defaultVerticalDPI());
+    static const auto pSystemParametersInfoForDpi =
+        reinterpret_cast<decltype(&::SystemParametersInfoForDpi)>(
+            QSystemLibrary::resolve(u"user32"_s, "SystemParametersInfoForDpi"));
+    if (pSystemParametersInfoForDpi)
+        pSystemParametersInfoForDpi(SPI_GETNONCLIENTMETRICS, ncm.cbSize, &ncm, 0, defaultVerticalDPI());
+    else
+        SystemParametersInfo(SPI_GETNONCLIENTMETRICS, ncm.cbSize, &ncm, 0);
     const QFont systemFont = QWindowsFontDatabase::LOGFONT_to_QFont(ncm.lfMessageFont);
     qCDebug(lcQpaFonts) << __FUNCTION__ << systemFont;
     return systemFont;
@@ -776,8 +789,7 @@ QList<IDWriteFontFace *> QWindowsFontDatabaseBase::createDirectWriteFaces(const 
 
 #if QT_CONFIG(directwrite3)
     IDWriteFactory5 *factory5 = nullptr;
-    if (queryVariations && SUCCEEDED(fontEngineData->directWriteFactory->QueryInterface(__uuidof(IDWriteFactory5),
-                                                                                        reinterpret_cast<void **>(&factory5)))) {
+    if (queryVariations && SUCCEEDED(fontEngineData->directWriteFactory->QueryInterface(IID_PPV_ARGS(&factory5)))) {
 
         IDWriteFontSetBuilder1 *builder;
         if (SUCCEEDED(factory5->CreateFontSetBuilder(&builder))) {

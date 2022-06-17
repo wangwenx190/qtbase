@@ -4,6 +4,7 @@
 #include "qfunctions_win_p.h"
 
 #include <QtCore/qdebug.h>
+#include <QtCore/private/qsystemlibrary_p.h>
 
 #include <combaseapi.h>
 #include <objbase.h>
@@ -14,6 +15,8 @@
 #endif
 
 QT_BEGIN_NAMESPACE
+
+using namespace Qt::StringLiterals;
 
 QComHelper::QComHelper(COINIT concurrencyModel)
 {
@@ -46,8 +49,13 @@ bool qt_win_hasPackageIdentity()
 {
 #if defined(HAS_APPMODEL)
     static const bool hasPackageIdentity = []() {
+        static const auto pGetCurrentPackageFullName =
+            reinterpret_cast<decltype(&::GetCurrentPackageFullName)>(
+                QSystemLibrary::resolve(u"kernel32"_s, "GetCurrentPackageFullName"));
+        if (!pGetCurrentPackageFullName)
+            return false;
         UINT32 length = 0;
-        switch (const auto result = GetCurrentPackageFullName(&length, nullptr)) {
+        switch (const auto result = pGetCurrentPackageFullName(&length, nullptr)) {
         case ERROR_INSUFFICIENT_BUFFER:
             return true;
         case APPMODEL_ERROR_NO_PACKAGE:

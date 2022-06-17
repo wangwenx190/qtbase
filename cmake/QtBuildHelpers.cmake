@@ -262,6 +262,8 @@ function(qt_internal_get_qt_build_private_files_to_install out_var)
         QtVersionlessAliasTargets.cmake.in
         QtVersionlessTargets.cmake.in
         QtWriteArgsFile.cmake
+        VC-LTL.cmake
+        YY-Thunks.cmake
         modulecppexports.h.in
         qbatchedtestrunner.in.cpp
         qt-internal-config.redo.in
@@ -471,5 +473,24 @@ macro(qt_internal_setup_build_and_global_variables)
     qt_internal_set_qt_allow_download()
 
     qt_internal_detect_dirty_features()
+
+    if(MSVC)
+        if(DEFINED ENV{QT_ENABLE_VCLTL})
+            include(VC-LTL)
+            if("x${SupportLTL}" STREQUAL "xtrue")
+                unset(CMAKE_MSVC_RUNTIME_LIBRARY)
+                unset(CMAKE_MSVC_RUNTIME_LIBRARY CACHE)
+                #unset(CMAKE_MSVC_RUNTIME_LIBRARY PARENT_SCOPE)
+                set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>" CACHE STRING "" FORCE)
+            endif()
+        endif()
+        if(DEFINED ENV{QT_ENABLE_YYTHUNKS})
+            unset(YYTHUNKS_TARGET_OS)
+            unset(YYTHUNKS_TARGET_OS CACHE)
+            #unset(YYTHUNKS_TARGET_OS PARENT_SCOPE)
+            set(YYTHUNKS_TARGET_OS "WinXP" CACHE STRING "" FORCE)
+            include(YY-Thunks)
+        endif()
+    endif()
 endmacro()
 

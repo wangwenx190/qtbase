@@ -24,8 +24,14 @@ QT_WARNING_POP
 #include <QVulkanFunctions>
 #include <QtGui/qwindow.h>
 #include <optional>
+#ifdef Q_OS_WINDOWS
+#  include <QtCore/private/qsystemlibrary_p.h>
+#  include <dwmapi.h>
+#endif
 
 QT_BEGIN_NAMESPACE
+
+using namespace Qt::StringLiterals;
 
 /*
   Vulkan 1.0 backend. Provides a double-buffered swapchain that throttles the
@@ -2122,9 +2128,11 @@ bool QRhiVulkan::recreateSwapChain(QRhiSwapChain *swapChain)
     // with VK_ERROR_NATIVE_WINDOW_IN_USE_KHR if the old swapchain is provided)
     const bool reuseExisting = swapChainD->sc && swapChainD->lastConnectedSurface == swapChainD->surface;
 
+#if 0 // Maybe useful but add too much noise.
     qCDebug(QRHI_LOG_INFO, "Creating %s swapchain of %u buffers, size %dx%d, presentation mode %d",
             reuseExisting ? "recycled" : "new",
             reqBufferCount, swapChainD->pixelSize.width(), swapChainD->pixelSize.height(), presentMode);
+#endif
 
     VkSwapchainCreateInfoKHR swapChainInfo = {};
     swapChainInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
@@ -2628,6 +2636,20 @@ QRhi::FrameOpResult QRhiVulkan::endFrame(QRhiSwapChain *swapChain, QRhi::EndFram
         // Do platform-specific WM notification. F.ex. essential on X11 in
         // order to prevent glitches on resizing the window.
         inst->presentQueued(swapChainD->window);
+
+#ifdef Q_OS_WINDOWS
+        // Try to prevent glitches on resizing the window.
+        static const auto pDwmFlush = reinterpret_cast<decltype(&::DwmFlush)>(QSystemLibrary::resolve("dwmapi"_L1, "DwmFlush"));
+        if (pDwmFlush) {
+            pDwmFlush();
+        } else {
+            static bool warnedOnce = false;
+            if (!warnedOnce) {
+                warnedOnce = true;
+                qWarning("Vulkan rhi: failed to load DwmFlush().");
+            }
+        }
+#endif // Q_OS_WINDOWS
 
         // mark the current swapchain buffer as unused from our side
         frame.imageAcquired = false;

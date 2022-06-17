@@ -5,6 +5,8 @@ qt_find_package(X11_XCB)
 qt_find_package(WrapHarfbuzz PROVIDED_TARGETS WrapHarfbuzz::WrapHarfbuzz)
 qt_find_package(WrapPNG PROVIDED_TARGETS WrapPNG::WrapPNG)
 qt_find_package(WrapFreetype PROVIDED_TARGETS WrapFreetype::WrapFreetype)
+qt_find_package(WrapZLIB PROVIDED_TARGETS WrapZLIB::WrapZLIB)
+qt_find_package(WrapZSTD PROVIDED_TARGETS WrapZSTD::WrapZSTD)
 
 if (QT_FEATURE_gui)
     if(QT_QPA_PLATFORMS)
@@ -283,6 +285,8 @@ qt_internal_add_module(Gui
         ../3rdparty/D3D12MemoryAllocator
     LIBRARIES
         Qt::CorePrivate
+        WrapZLIB::WrapZLIB
+        WrapZSTD::WrapZSTD
     PUBLIC_LIBRARIES
         Qt::Core
     PRIVATE_MODULE_INTERFACE
@@ -474,11 +478,6 @@ qt_internal_extend_target(Gui CONDITION WIN32
         shell32
         user32
         uxtheme
-    PUBLIC_LIBRARIES
-        d3d11
-        dxgi
-        dxguid
-        d3d12
     ATTRIBUTION_FILE_DIR_PATHS
         ../3rdparty/D3D12MemoryAllocator
 )
@@ -793,20 +792,11 @@ qt_internal_extend_target(Gui CONDITION QT_FEATURE_freetype AND WIN32
 qt_internal_extend_target(Gui CONDITION QT_FEATURE_direct2d AND QT_FEATURE_directwrite AND WIN32
     SOURCES
         text/windows/qwindowsfontenginedirectwrite.cpp text/windows/qwindowsfontenginedirectwrite_p.h
-    LIBRARIES
-        d2d1
 )
 
 qt_internal_extend_target(Gui CONDITION QT_FEATURE_direct2d AND QT_FEATURE_directwrite AND QT_FEATURE_directwrite3 AND WIN32
     SOURCES
         text/windows/qwindowsdirectwritefontdatabase.cpp text/windows/qwindowsdirectwritefontdatabase_p.h
-    LIBRARIES
-        dwrite
-)
-
-qt_internal_extend_target(Gui CONDITION QT_FEATURE_direct2d AND QT_FEATURE_directwrite AND WIN32 AND NOT QT_FEATURE_directwrite3
-    LIBRARIES
-        dwrite
 )
 
 qt_internal_extend_target(Gui CONDITION MINGW AND WIN32
@@ -840,21 +830,18 @@ qt_internal_extend_target(Gui CONDITION ANDROID AND TEST_architecture_arch STREQ
         QT_COMPILER_SUPPORTS_SSE4_2
 )
 
-qt_internal_extend_target(Gui CONDITION QT_FEATURE_system_zlib
-    LIBRARIES
-        WrapZLIB::WrapZLIB
-)
-
 qt_internal_extend_target(Gui CONDITION NOT QT_FEATURE_system_zlib
-    INCLUDE_DIRECTORIES
-        ../3rdparty/zlib/src
     ATTRIBUTION_FILE_DIR_PATHS
         ../3rdparty/zlib
+    LIBRARIES
+        Qt::ZlibPrivate
 )
 
-qt_internal_extend_target(Gui CONDITION NOT QT_FEATURE_system_zlib AND NOT no_core_dep
+qt_internal_extend_target(Gui CONDITION NOT QT_FEATURE_system_zstd
+    ATTRIBUTION_FILE_DIR_PATHS
+        ../3rdparty/zstd
     LIBRARIES
-        Qt::Core
+        Qt::ZstdPrivate
 )
 
 qt_internal_extend_target(Gui CONDITION QT_FEATURE_undocommand

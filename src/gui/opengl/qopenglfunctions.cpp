@@ -10,6 +10,10 @@
 #include <QtGui/private/qguiapplication_p.h>
 #include <qpa/qplatformintegration.h>
 #include <qpa/qplatformnativeinterface.h>
+#ifdef Q_OS_WINDOWS
+#  include <QtCore/private/qsystemlibrary_p.h>
+#  include <dwmapi.h>
+#endif
 
 #ifdef Q_OS_INTEGRITY
 #include <EGL/egl.h>
@@ -5100,6 +5104,20 @@ void QOpenGLExtensions::flushShared()
         glFlush();
     else
         glFinish();
+
+#ifdef Q_OS_WINDOWS
+    // Try to prevent glitches on resizing the window.
+    static const auto pDwmFlush = reinterpret_cast<decltype(&::DwmFlush)>(QSystemLibrary::resolve("dwmapi"_L1, "DwmFlush"));
+    if (pDwmFlush) {
+        pDwmFlush();
+    } else {
+        static bool warnedOnce = false;
+        if (!warnedOnce) {
+            warnedOnce = true;
+            qWarning("QOpenGLExtensions::flushShared(): failed to load DwmFlush().");
+        }
+    }
+#endif // Q_OS_WINDOWS
 }
 
 QT_END_NAMESPACE

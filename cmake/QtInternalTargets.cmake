@@ -272,7 +272,7 @@ if (MSVC AND NOT CLANG)
         target_compile_options(PlatformCommonInternal INTERFACE
             -FS
             -Zc:rvalueCast
-            -Zc:inline
+            $<$<NOT:$<CONFIG:Debug>>:-Zc:inline>
         )
     endif()
     if (MSVC_VERSION GREATER_EQUAL 1899)
@@ -290,8 +290,18 @@ if (MSVC AND NOT CLANG)
     if (MSVC_VERSION GREATER_EQUAL 1919) # MSVC 2019
         target_compile_options(PlatformCommonInternal INTERFACE
             "${is_not_clang_cl_start}-Zc:externConstexpr${is_not_clang_cl_end}"
-            #-Zc:lambda # Buggy. TODO: Enable again when stable enough.
-            #-Zc:preprocessor # breaks build due to bug in default Windows SDK 10.0.19041
+            -Zc:lambda
+            -Zc:preprocessor
+        )
+    endif()
+    if (MSVC_VERSION GREATER_EQUAL 1925) # Visual Studio 2019 version 16.5
+        target_compile_options(PlatformCommonInternal INTERFACE
+            $<$<NOT:$<CONFIG:Debug>>:-QIntel-jcc-erratum>
+        )
+    endif()
+    if (MSVC_VERSION GREATER_EQUAL 1937) # Visual Studio 2022 version 17.7
+        target_compile_options(PlatformCommonInternal INTERFACE
+            $<$<NOT:$<CONFIG:Debug>>:-jumptablerdata>
         )
     endif()
 
@@ -301,13 +311,64 @@ if (MSVC AND NOT CLANG)
     )
 
     target_compile_options(PlatformCommonInternal INTERFACE
-        $<$<NOT:$<CONFIG:Debug>>:-guard:cf -Gw>
+        # NOTE: -fp:fast: don't add it, it makes some math calculations give very wrong result.
+        $<$<NOT:$<CONFIG:Debug>>:-GT -Gw -Gy -Qfast_transcendentals -Qpar>
+        $<$<AND:$<NOT:$<CONFIG:Debug>>,$<STREQUAL:$<TARGET_PROPERTY:TYPE>,EXECUTABLE>>:-GA>
     )
 
     qt_internal_platform_link_options(PlatformCommonInternal INTERFACE
-        -DYNAMICBASE -NXCOMPAT -LARGEADDRESSAWARE
-        $<$<NOT:$<CONFIG:Debug>>:-OPT:REF -OPT:ICF -GUARD:CF>
+        -DYNAMICBASE -FIXED:NO -NXCOMPAT -LARGEADDRESSAWARE
+        $<$<NOT:$<CONFIG:Debug>>:-OPT:REF -OPT:ICF -OPT:LBR>
     )
+
+    if(TEST_architecture_arch STREQUAL "x86_64")
+        qt_internal_platform_link_options(PlatformCommonInternal INTERFACE
+            -HIGHENTROPYVA
+        )
+    endif()
+endif()
+
+if(MSVC AND CLANG)
+    target_compile_options(PlatformCommonInternal INTERFACE
+        /bigobj /utf-8 /FS
+        -fcolor-diagnostics
+        -fmerge-all-constants # This used to be the default in clang for over a decade. It makes clang non-conforming, but is fairly safe in practice and saves some binary size.
+        -fcomplete-member-pointers # This flag enforces that member pointer base types are complete. It helps prevent us from running into problems in the Microsoft C++ ABI.
+        -ffile-reproducible # Consistently use backslash as the path separator when expanding the __FILE__ macro when targeting Windows regardless of the build environment.
+        -fansi-escape-codes # Enable ANSI escape codes if something emulating them is around (cmd.exe doesn't understand ANSI escape codes by default).
+        /Zc:char8_t /Zc:sizedDealloc /Zc:strictStrings /Zc:threadSafeInit
+        /Zc:trigraphs /Zc:twoPhase
+        /Zc:dllexportInlines- # Do not export inline member functions. This is similar to "-fvisibility-inlines-hidden".
+        /D__WRL_ENABLE_FUNCTION_STATICS__ # Required to make the 19041 SDK compatible with clang-cl.
+        $<$<NOT:$<CONFIG:Debug>>:/clang:-mbranches-within-32B-boundaries /Gw /Gy /Zc:inline> # No "/fp:fast", same reason as MSVC above.
+    )
+    qt_internal_platform_link_options(PlatformCommonInternal INTERFACE
+        --color-diagnostics
+        /DYNAMICBASE /FIXED:NO /NXCOMPAT /LARGEADDRESSAWARE
+        $<$<NOT:$<CONFIG:Debug>>:/OPT:REF /OPT:ICF /OPT:LBR /OPT:lldtailmerge>
+    )
+    if(TEST_architecture_arch STREQUAL "x86_64")
+        target_compile_options(PlatformCommonInternal INTERFACE
+            /clang:-m64
+            /clang:-mcx16 # Needed by _InterlockedCompareExchange128() from CPP/WinRT.
+        )
+        qt_internal_platform_link_options(PlatformCommonInternal INTERFACE
+            /HIGHENTROPYVA
+        )
+    elseif(TEST_architecture_arch STREQUAL "x86")
+        target_compile_options(PlatformCommonInternal INTERFACE
+            /clang:-m32
+        )
+    endif()
+    if(QT_FEATURE_ltcg)
+        target_compile_options(PlatformCommonInternal INTERFACE
+            #$<$<NOT:$<CONFIG:Debug>>:-fsplit-lto-unit -funified-lto>
+            $<$<AND:$<NOT:$<CONFIG:Debug>>,$<STREQUAL:$<TARGET_PROPERTY:TYPE>,EXECUTABLE>>:-fwhole-program-vtables> # Whole program optimizations should not be enabled for libraries.
+        )
+        qt_internal_platform_link_options(PlatformCommonInternal INTERFACE
+            $<$<NOT:$<CONFIG:Debug>>:/OPT:lldltojobs=all /OPT:lldlto=3 /OPT:lldltocgo=3>
+        )
+    endif()
 endif()
 
 if(MINGW)
@@ -321,6 +382,41 @@ endif()
 # Hardening options
 
 qt_internal_apply_intel_cet_harderning(PlatformCommonInternal)
+
+if(QT_FEATURE_cfguard)
+    if(MSVC)
+        target_compile_options(PlatformCommonInternal INTERFACE -guard:cf)
+        qt_internal_platform_link_options(PlatformCommonInternal INTERFACE -GUARD:CF)
+    else()
+        # TODO
+    endif()
+endif()
+
+if(QT_FEATURE_spectre)
+    if(MSVC AND NOT CLANG)
+        if(MSVC_VERSION GREATER_EQUAL 1930) # Visual Studio 2022 version 17.0
+            target_compile_options(PlatformCommonInternal INTERFACE -Qspectre-jmp)
+        endif()
+        if(MSVC_VERSION GREATER_EQUAL 1925) # Visual Studio 2019 version 16.5
+            target_compile_options(PlatformCommonInternal INTERFACE -Qspectre-load)
+        elseif(MSVC_VERSION GREATER_EQUAL 1912) # Visual Studio 2017 version 15.5
+            target_compile_options(PlatformCommonInternal INTERFACE -Qspectre)
+        endif()
+    else()
+        # TODO
+    endif()
+endif()
+
+if(QT_FEATURE_ehcont)
+    if(MSVC)
+        if(CLANG OR (MSVC_VERSION GREATER_EQUAL 1927)) # Visual Studio 2019 version 16.7
+            target_compile_options(PlatformCommonInternal INTERFACE -guard:ehcont)
+            qt_internal_platform_link_options(PlatformCommonInternal INTERFACE -guard:ehcont)
+        endif()
+    else()
+        # TODO
+    endif()
+endif()
 
 if(QT_FEATURE_glibc_fortify_source)
     set(is_optimized_build "$<OR:$<NOT:$<CONFIG:Debug>>,$<BOOL:${QT_FEATURE_optimize_debug}>>")

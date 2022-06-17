@@ -372,8 +372,7 @@ void QWindowsFontEngineDirectWrite::collectMetrics()
 
 #if QT_CONFIG(directwrite3)
     IDWriteFontFace5 *face5;
-    if (SUCCEEDED(m_directWriteFontFace->QueryInterface(__uuidof(IDWriteFontFace5),
-                                       reinterpret_cast<void **>(&face5)))) {
+    if (SUCCEEDED(m_directWriteFontFace->QueryInterface(IID_PPV_ARGS(&face5)))) {
 
         IDWriteFontResource *fontResource;
         if (SUCCEEDED(face5->GetFontResource(&fontResource))) {
@@ -753,8 +752,7 @@ bool QWindowsFontEngineDirectWrite::supportsHorizontalSubPixelPositions() const
 QFontEngine::Properties QWindowsFontEngineDirectWrite::properties() const
 {
     IDWriteFontFace2 *directWriteFontFace2;
-    if (SUCCEEDED(m_directWriteFontFace->QueryInterface(__uuidof(IDWriteFontFace2),
-                                                        reinterpret_cast<void **>(&directWriteFontFace2)))) {
+    if (SUCCEEDED(m_directWriteFontFace->QueryInterface(IID_PPV_ARGS(&directWriteFontFace2)))) {
         DWRITE_FONT_METRICS1 metrics;
         directWriteFontFace2->GetMetrics(&metrics);
 
@@ -821,8 +819,7 @@ QImage QWindowsFontEngineDirectWrite::imageForGlyph(glyph_t t,
             : DWRITE_GRID_FIT_MODE_DEFAULT;
 
     IDWriteFactory2 *factory2 = nullptr;
-    HRESULT hr = m_fontEngineData->directWriteFactory->QueryInterface(__uuidof(IDWriteFactory2),
-                                                                      reinterpret_cast<void **>(&factory2));
+    HRESULT hr = m_fontEngineData->directWriteFactory->QueryInterface(IID_PPV_ARGS(&factory2));
     IDWriteGlyphRunAnalysis *glyphAnalysis = NULL;
     if (!SUCCEEDED(hr)) {
         qErrnoWarning(hr, "%s: Failed to query IDWriteFactory2 interface.", __FUNCTION__);
@@ -1111,8 +1108,7 @@ void QWindowsFontEngineDirectWrite::initFontInfo(const QFontDef &request,
 
 #if QT_CONFIG(directwrite3)
     IDWriteFontFace3 *face3 = nullptr;
-    if (SUCCEEDED(m_directWriteFontFace->QueryInterface(__uuidof(IDWriteFontFace3),
-                                                        reinterpret_cast<void **>(&face3)))) {
+    if (SUCCEEDED(m_directWriteFontFace->QueryInterface(IID_PPV_ARGS(&face3)))) {
         IDWriteLocalizedStrings *names;
         if (SUCCEEDED(face3->GetFaceNames(&names))) {
             wchar_t englishLocale[] = L"en-us";
@@ -1183,8 +1179,7 @@ glyph_metrics_t QWindowsFontEngineDirectWrite::alphaMapBoundingBox(glyph_t glyph
             : DWRITE_GRID_FIT_MODE_DEFAULT;
 
     IDWriteFactory2 *factory2 = nullptr;
-    HRESULT hr = m_fontEngineData->directWriteFactory->QueryInterface(__uuidof(IDWriteFactory2),
-                                                                      reinterpret_cast<void **>(&factory2));
+    HRESULT hr = m_fontEngineData->directWriteFactory->QueryInterface(IID_PPV_ARGS(&factory2));
 
     IDWriteGlyphRunAnalysis *glyphAnalysis = NULL;
     if (SUCCEEDED(hr)) {

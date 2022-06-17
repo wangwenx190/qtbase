@@ -28,6 +28,7 @@ qt_internal_add_plugin(QWindowsIntegrationPlugin
         qwindowskeymapper.cpp qwindowskeymapper.h
         qwindowsmenu.cpp qwindowsmenu.h
         qwindowsmimeregistry.cpp qwindowsmimeregistry.h
+        qwindowsmousehandler.cpp qwindowsmousehandler.h
         qwindowsnativeinterface.cpp qwindowsnativeinterface.h
         qwindowsole.cpp qwindowsole.h
         qwindowsopengltester.cpp qwindowsopengltester.h
@@ -50,7 +51,6 @@ qt_internal_add_plugin(QWindowsIntegrationPlugin
         Qt::Gui
         Qt::GuiPrivate
         advapi32
-        dwmapi
         gdi32
         imm32
         ole32
@@ -62,10 +62,7 @@ qt_internal_add_plugin(QWindowsIntegrationPlugin
         winmm
         winspool
         wtsapi32
-        shcore
         comdlg32
-        d3d9
-        runtimeobject
 )
 
 # Resources:

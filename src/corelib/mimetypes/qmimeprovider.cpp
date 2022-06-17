@@ -31,7 +31,7 @@ __attribute__((section(".qtmimedatabase"), aligned(4096)))
 #  include "qmimeprovider_database.cpp"
 
 #  ifdef MIME_DATABASE_IS_ZSTD
-#    if !QT_CONFIG(zstd)
+#    ifdef QT_NO_COMPRESS
 #      error "MIME database is zstd but no support compiled in!"
 #    endif
 #    include <zstd.h>

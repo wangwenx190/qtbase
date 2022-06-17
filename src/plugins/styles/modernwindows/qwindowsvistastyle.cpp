@@ -3926,6 +3926,21 @@ void QWindowsVistaStyle::drawComplexControl(ComplexControl control, const QStyle
                     theme.partId = flags & State_Horizontal ? SBP_THUMBBTNHORZ : SBP_THUMBBTNVERT;
                     theme.stateId = stateId;
                     d->drawBackground(theme);
+
+                    if (!QOperatingSystemVersion::isWin8OrGreater()) {
+                        const QRect gripperBounds = QWindowsVistaStylePrivate::scrollBarGripperBounds(flags, widget, &theme);
+                        // Draw gripper if there is enough space
+                        if (!gripperBounds.isEmpty() && flags & State_Enabled) {
+                            painter->save();
+                            QWindowsThemeData grippBackground = theme;
+                            grippBackground.partId = flags & State_Horizontal ? SBP_LOWERTRACKHORZ : SBP_LOWERTRACKVERT;
+                            theme.rect = gripperBounds;
+                            painter->setClipRegion(d->region(theme));// Only change inside the region of the gripper
+                            d->drawBackground(grippBackground);// The gutter is the grippers background
+                            d->drawBackground(theme);          // Transparent gripper ontop of background
+                            painter->restore();
+                        }
+                    }
                 }
             }
         }
@@ -5017,6 +5032,22 @@ QIcon QWindowsVistaStyle::standardIcon(StandardPixmap standardIcon,
     }
 
     return QWindowsStyle::standardIcon(standardIcon, option, widget);
+}
+
+QRect QWindowsVistaStylePrivate::scrollBarGripperBounds(QStyle::State flags, const QWidget *widget, QWindowsThemeData *theme)
+{
+    const bool horizontal = flags & QStyle::State_Horizontal;
+    const qreal factor = QWindowsStylePrivate::nativeMetricScaleFactor(widget);
+    const QMargins contentsMargin =
+        (theme->margins(theme->rect, TMT_SIZINGMARGINS) * factor).toMargins();
+    theme->partId = horizontal ? SBP_GRIPPERHORZ : SBP_GRIPPERVERT;
+    const QSize size = (theme->size() * factor).toSize();
+
+    const int hSpace = theme->rect.width() - size.width();
+    const int vSpace = theme->rect.height() - size.height();
+    const bool sufficientSpace = (horizontal && hSpace > (contentsMargin.left() + contentsMargin.right()))
+        || vSpace > contentsMargin.top() + contentsMargin.bottom();
+    return sufficientSpace ? QRect(theme->rect.topLeft() + QPoint(hSpace, vSpace) / 2, size) : QRect();
 }
 
 QT_END_NAMESPACE

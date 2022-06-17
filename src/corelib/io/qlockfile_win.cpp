@@ -13,7 +13,11 @@
 #include "QtCore/qdebug.h"
 #include "QtCore/qthread.h"
 
+#include <QtCore/private/qsystemlibrary_p.h>
+
 QT_BEGIN_NAMESPACE
+
+using namespace Qt::StringLiterals;
 
 static inline bool fileExists(const wchar_t *fileName)
 {
@@ -96,12 +100,16 @@ bool QLockFilePrivate::isProcessRunning(qint64 pid, const QString &appname)
 
 QString QLockFilePrivate::processNameByPid(qint64 pid)
 {
-    HANDLE hProcess = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, DWORD(pid));
-    if (!hProcess) {
+    static const auto pGetModuleFileNameExW =
+        reinterpret_cast<decltype(&::GetModuleFileNameExW)>(
+            QSystemLibrary::resolve(u"psapi"_s, "GetModuleFileNameExW"));
+    if (!pGetModuleFileNameExW)
         return QString();
-    }
+    HANDLE hProcess = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, DWORD(pid));
+    if (!hProcess)
+        return QString();
     wchar_t buf[MAX_PATH];
-    const DWORD length = GetModuleFileNameExW(hProcess, NULL, buf, sizeof(buf) / sizeof(wchar_t));
+    const DWORD length = pGetModuleFileNameExW(hProcess, NULL, buf, sizeof(buf) / sizeof(wchar_t));
     CloseHandle(hProcess);
     if (!length)
         return QString();

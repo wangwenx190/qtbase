@@ -62,6 +62,11 @@ Q_CORE_EXPORT Q_DECL_CONST_FUNCTION bool qSharedBuild() noexcept;
 
 #endif
 
+#if (!defined(QT_NAMESPACE) && defined(__cplusplus))
+extern "C"
+#endif
+Q_CORE_EXPORT Q_DECL_CONST_FUNCTION quint64 __wangwenx190__(void) noexcept;
+
 QT_END_NAMESPACE
 
 #endif // QLIBRARYINFO_H

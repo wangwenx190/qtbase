@@ -139,8 +139,7 @@ void QWindowsDirectWriteFontDatabase::populateFamily(const QString &familyName)
             DirectWriteScope<IDWriteFont> font;
             if (SUCCEEDED(matchingFonts->GetFont(j, &font))) {
                 DirectWriteScope<IDWriteFont1> font1;
-                if (!SUCCEEDED(font->QueryInterface(__uuidof(IDWriteFont1),
-                                                   reinterpret_cast<void **>(&font1)))) {
+                if (!SUCCEEDED(font->QueryInterface(IID_PPV_ARGS(&font1)))) {
                     qCWarning(lcQpaFonts) << "COM object does not support IDWriteFont1";
                     continue;
                 }
@@ -222,8 +221,7 @@ QSupportedWritingSystems QWindowsDirectWriteFontDatabase::supportedWritingSystem
     writingSystems.setSupported(QFontDatabase::Any);
 
     DirectWriteScope<IDWriteFontFace1> face1;
-    if (SUCCEEDED(face->QueryInterface(__uuidof(IDWriteFontFace1),
-                                       reinterpret_cast<void **>(&face1)))) {
+    if (SUCCEEDED(face->QueryInterface(IID_PPV_ARGS(&face1)))) {
         const void *tableData = nullptr;
         UINT32 tableSize;
         void *tableContext = nullptr;
@@ -291,8 +289,7 @@ bool QWindowsDirectWriteFontDatabase::populateFamilyAliases(const QString &missi
                     if (SUCCEEDED(fontCollection->GetFontFromFontFace(*directWriteFontFace, &font))) {
 
                         DirectWriteScope<IDWriteFont1> font1;
-                        if (SUCCEEDED(font->QueryInterface(__uuidof(IDWriteFont1),
-                                                           reinterpret_cast<void **>(&font1)))) {
+                        if (SUCCEEDED(font->QueryInterface(IID_PPV_ARGS(&font1)))) {
                             DirectWriteScope<IDWriteLocalizedStrings> names;
                             if (SUCCEEDED(font1->GetFaceNames(&names))) {
                                 wchar_t englishLocale[] = L"en-us";
@@ -358,8 +355,7 @@ QFontEngine *QWindowsDirectWriteFontDatabase::fontEngine(const QFontDef &fontDef
     DWRITE_FONT_SIMULATIONS simulations = DWRITE_FONT_SIMULATIONS_NONE;
     if (fontDef.weight >= QFont::DemiBold || fontDef.style != QFont::StyleNormal) {
         DirectWriteScope<IDWriteFontFace3> face3;
-        if (SUCCEEDED(face->QueryInterface(__uuidof(IDWriteFontFace3),
-                                           reinterpret_cast<void **>(&face3)))) {
+        if (SUCCEEDED(face->QueryInterface(IID_PPV_ARGS(&face3)))) {
             if (fontDef.weight >= QFont::DemiBold && face3->GetWeight() < DWRITE_FONT_WEIGHT_DEMI_BOLD)
                 simulations |= DWRITE_FONT_SIMULATIONS_BOLD;
 
@@ -371,8 +367,7 @@ QFontEngine *QWindowsDirectWriteFontDatabase::fontEngine(const QFontDef &fontDef
     DirectWriteScope<IDWriteFontFace5> newFace;
     if (!fontDef.variableAxisValues.isEmpty() || simulations != DWRITE_FONT_SIMULATIONS_NONE) {
         DirectWriteScope<IDWriteFontFace5> face5;
-        if (SUCCEEDED(face->QueryInterface(__uuidof(IDWriteFontFace5),
-                                           reinterpret_cast<void **>(&face5)))) {
+        if (SUCCEEDED(face->QueryInterface(IID_PPV_ARGS(&face5)))) {
             DirectWriteScope<IDWriteFontResource> font;
             if (SUCCEEDED(face5->GetFontResource(&font))) {
                 UINT32 fontAxisCount = font->GetFontAxisCount();
@@ -453,8 +448,7 @@ QStringList QWindowsDirectWriteFontDatabase::addApplicationFont(const QByteArray
 
         QSupportedWritingSystems writingSystems = supportedWritingSystems(face);
         DirectWriteScope<IDWriteFontFace3> face3;
-        if (SUCCEEDED(face->QueryInterface(__uuidof(IDWriteFontFace3),
-                                           reinterpret_cast<void **>(&face3)))) {
+        if (SUCCEEDED(face->QueryInterface(IID_PPV_ARGS(&face3)))) {
             QString defaultLocaleFamilyName;
             QString englishLocaleFamilyName;
 
@@ -724,8 +718,7 @@ void QWindowsDirectWriteFontDatabase::populateFontDatabase()
 
     DirectWriteScope<IDWriteFontCollection2> fontCollection;
     DirectWriteScope<IDWriteFactory6> factory6;
-    if (FAILED(data()->directWriteFactory->QueryInterface(__uuidof(IDWriteFactory6),
-                                                          reinterpret_cast<void **>(&factory6)))) {
+    if (FAILED(data()->directWriteFactory->QueryInterface(IID_PPV_ARGS(&factory6)))) {
         qCWarning(lcQpaFonts) << "Can't initialize IDWriteFactory6. Use GDI font engine instead.";
         return;
     }
@@ -793,8 +786,7 @@ bool QWindowsDirectWriteFontDatabase::supportsVariableApplicationFonts() const
 {
     QSharedPointer<QWindowsFontEngineData> fontEngineData = data();
     DirectWriteScope<IDWriteFactory5> factory5;
-    if (SUCCEEDED(fontEngineData->directWriteFactory->QueryInterface(__uuidof(IDWriteFactory5),
-                                                                     reinterpret_cast<void **>(&factory5)))) {
+    if (SUCCEEDED(fontEngineData->directWriteFactory->QueryInterface(IID_PPV_ARGS(&factory5)))) {
         return true;
     }
 

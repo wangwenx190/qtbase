@@ -774,7 +774,7 @@ public:
     LUID adapterLuid = {};
     ID3DUserDefinedAnnotation *annotations = nullptr;
     IDXGIAdapter1 *activeAdapter = nullptr;
-    IDXGIFactory1 *dxgiFactory = nullptr;
+    IDXGIFactory *dxgiFactory = nullptr;
     IDCompositionDevice *dcompDevice = nullptr;
     bool supportsAllowTearing = false;
     bool useLegacySwapchainModel = false;

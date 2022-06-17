@@ -1130,7 +1130,7 @@ function(qt_config_compile_test name)
             # https://developercommunity.visualstudio.com/content/problem/139261/msvc-incorrectly-defines-cplusplus.html
             # No support for the flag in upstream CMake as of 3.17.
             # https://gitlab.kitware.com/cmake/cmake/issues/18837
-            if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC" AND MSVC_VERSION GREATER_EQUAL 1913)
+            if(MSVC AND (MSVC_VERSION GREATER_EQUAL 1913) AND NOT CLANG)
                 list(APPEND CMAKE_REQUIRED_FLAGS "-Zc:__cplusplus")
             endif()
 

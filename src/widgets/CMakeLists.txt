@@ -380,7 +380,6 @@ qt_internal_extend_target(Widgets CONDITION MACOS
 
 qt_internal_extend_target(Widgets CONDITION WIN32
     LIBRARIES
-        dwmapi
         shell32
         uxtheme
 )

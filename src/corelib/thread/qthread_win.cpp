@@ -11,6 +11,7 @@
 
 #include <private/qcoreapplication_p.h>
 #include <private/qeventdispatcher_win_p.h>
+#include <private/qsystemlibrary_p.h>
 
 #include <qt_windows.h>
 
@@ -31,6 +32,8 @@ SetThreadDescription(
 }
 
 QT_BEGIN_NAMESPACE
+
+using namespace Qt::StringLiterals;
 
 #if QT_CONFIG(thread)
 
@@ -263,7 +266,9 @@ unsigned int __stdcall QT_ENSURE_STACK_ALIGNED_FOR_SSE QThreadPrivate::start(voi
     QString threadName = std::exchange(thr->d_func()->objectName, {});
     if (Q_LIKELY(threadName.isEmpty()))
         threadName = QString::fromUtf8(thr->metaObject()->className());
-    SetThreadDescription(GetCurrentThread(), reinterpret_cast<const wchar_t *>(threadName.utf16()));
+    static const auto pSetThreadDescription = reinterpret_cast<decltype(&::SetThreadDescription)>(QSystemLibrary::resolve("kernel32"_L1, "SetThreadDescription"));
+    if (pSetThreadDescription)
+        pSetThreadDescription(GetCurrentThread(), reinterpret_cast<const wchar_t *>(threadName.utf16()));
 
     emit thr->started(QThread::QPrivateSignal());
     QThread::setTerminationEnabled(true);

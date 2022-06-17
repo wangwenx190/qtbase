@@ -4,6 +4,7 @@
 #include "qwin10helpers.h"
 
 #include <QtCore/qdebug.h>
+#include <QtCore/private/qsystemlibrary_p.h>
 #include <winstring.h>
 #include <roapi.h>
 
@@ -60,29 +61,62 @@ public:
 
 QT_BEGIN_NAMESPACE
 
+using namespace Qt::StringLiterals;
+
+struct QComBaseApi final
+{
+    decltype(&::RoGetActivationFactory) pRoGetActivationFactory = nullptr;
+    decltype(&::WindowsCreateStringReference) pWindowsCreateStringReference = nullptr;
+
+    [[nodiscard]] static QComBaseApi *instance()
+    {
+        static QComBaseApi api;
+        return &api;
+    }
+
+private:
+    Q_DISABLE_COPY_MOVE(QComBaseApi)
+
+    QComBaseApi()
+    {
+        QSystemLibrary comBase(u"combase"_s);
+        pRoGetActivationFactory = reinterpret_cast<decltype(pRoGetActivationFactory)>(comBase.resolve("RoGetActivationFactory"));
+        pWindowsCreateStringReference = reinterpret_cast<decltype(pWindowsCreateStringReference)>(comBase.resolve("WindowsCreateStringReference"));
+    }
+
+    ~QComBaseApi() = default;
+};
+
 // Return tablet mode, note: Does not work for GetDesktopWindow().
 bool qt_windowsIsTabletMode(HWND hwnd)
 {
+    if (!QComBaseApi::instance()->pRoGetActivationFactory ||
+        !QComBaseApi::instance()->pWindowsCreateStringReference) {
+        return false;
+    }
+
     bool result = false;
 
     const wchar_t uiViewSettingsId[] = L"Windows.UI.ViewManagement.UIViewSettings";
     HSTRING_HEADER uiViewSettingsIdRefHeader;
     HSTRING uiViewSettingsIdHs = nullptr;
     const auto uiViewSettingsIdLen = UINT32(sizeof(uiViewSettingsId) / sizeof(uiViewSettingsId[0]) - 1);
-    if (FAILED(WindowsCreateStringReference(uiViewSettingsId, uiViewSettingsIdLen, &uiViewSettingsIdRefHeader, &uiViewSettingsIdHs)))
+    if (FAILED(QComBaseApi::instance()->pWindowsCreateStringReference(uiViewSettingsId, uiViewSettingsIdLen, &uiViewSettingsIdRefHeader, &uiViewSettingsIdHs)))
         return false;
 
     IUIViewSettingsInterop *uiViewSettingsInterop = nullptr;
     // __uuidof(IUIViewSettingsInterop);
-    const GUID uiViewSettingsInteropRefId = {0x3694dbf9, 0x8f68, 0x44be,{0x8f, 0xf5, 0x19, 0x5c, 0x98, 0xed, 0xe8, 0xa6}};
+    static constexpr const GUID uiViewSettingsInteropRefId =
+        {0x3694dbf9, 0x8f68, 0x44be,{0x8f, 0xf5, 0x19, 0x5c, 0x98, 0xed, 0xe8, 0xa6}};
 
-    HRESULT hr = RoGetActivationFactory(uiViewSettingsIdHs, uiViewSettingsInteropRefId,
+    HRESULT hr = QComBaseApi::instance()->pRoGetActivationFactory(uiViewSettingsIdHs, uiViewSettingsInteropRefId,
                                                    reinterpret_cast<void **>(&uiViewSettingsInterop));
     if (FAILED(hr))
         return false;
 
     //  __uuidof(ABI::Windows::UI::ViewManagement::IUIViewSettings);
-    const GUID uiViewSettingsRefId = {0xc63657f6, 0x8850, 0x470d,{0x88, 0xf8, 0x45, 0x5e, 0x16, 0xea, 0x2c, 0x26}};
+    static constexpr const GUID uiViewSettingsRefId =
+        {0xc63657f6, 0x8850, 0x470d,{0x88, 0xf8, 0x45, 0x5e, 0x16, 0xea, 0x2c, 0x26}};
     ABI::Windows::UI::ViewManagement::IUIViewSettings *viewSettings = nullptr;
     hr = uiViewSettingsInterop->GetForWindow(hwnd, uiViewSettingsRefId,
                                              reinterpret_cast<void **>(&viewSettings));

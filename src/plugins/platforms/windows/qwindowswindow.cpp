@@ -23,6 +23,7 @@
 #  include "qwindowscursor.h"
 #endif
 
+#include <QtCore/qoperatingsystemversion.h>
 #include <QtGui/qguiapplication.h>
 #include <QtGui/qscreen.h>
 #include <QtGui/qwindow.h>
@@ -55,6 +56,39 @@ using QWindowCreationContextPtr = QSharedPointer<QWindowCreationContext>;
 enum {
     defaultWindowWidth = 160,
     defaultWindowHeight = 160
+};
+
+struct QtDwmApis final
+{
+    decltype(&::DwmIsCompositionEnabled) pDwmIsCompositionEnabled = nullptr;
+    decltype(&::DwmEnableBlurBehindWindow) pDwmEnableBlurBehindWindow = nullptr;
+    decltype(&::DwmGetWindowAttribute) pDwmGetWindowAttribute = nullptr;
+    decltype(&::DwmSetWindowAttribute) pDwmSetWindowAttribute = nullptr;
+
+    [[nodiscard]] static QtDwmApis *instance()
+    {
+        static QtDwmApis inst;
+        return &inst;
+    }
+
+    [[nodiscard]] bool isDwmAvailable() const
+    {
+        return pDwmIsCompositionEnabled && pDwmEnableBlurBehindWindow && pDwmGetWindowAttribute && pDwmSetWindowAttribute;
+    }
+
+private:
+    Q_DISABLE_COPY_MOVE(QtDwmApis)
+
+    QtDwmApis()
+    {
+        QSystemLibrary dwmapi(u"dwmapi"_s);
+        pDwmIsCompositionEnabled = reinterpret_cast<decltype(pDwmIsCompositionEnabled)>(dwmapi.resolve("DwmIsCompositionEnabled"));
+        pDwmEnableBlurBehindWindow = reinterpret_cast<decltype(pDwmEnableBlurBehindWindow)>(dwmapi.resolve("DwmEnableBlurBehindWindow"));
+        pDwmGetWindowAttribute = reinterpret_cast<decltype(pDwmGetWindowAttribute)>(dwmapi.resolve("DwmGetWindowAttribute"));
+        pDwmSetWindowAttribute = reinterpret_cast<decltype(pDwmSetWindowAttribute)>(dwmapi.resolve("DwmSetWindowAttribute"));
+    }
+
+    ~QtDwmApis() = default;
 };
 
 Q_GUI_EXPORT HICON qt_pixmapToWinHICON(const QPixmap &);
@@ -442,6 +476,41 @@ static inline bool windowIsAccelerated(const QWindow *w)
     }
 }
 
+static bool dwmIsCompositionEnabled()
+{
+    // DWM composition is always enabled and can't be disabled since Win8.
+    if (QOperatingSystemVersion::isWin8OrGreater())
+        return true;
+    if (!QtDwmApis::instance()->isDwmAvailable())
+        return false;
+    BOOL enabled = FALSE;
+    return SUCCEEDED(QtDwmApis::instance()->pDwmIsCompositionEnabled(&enabled)) && enabled != FALSE;
+}
+
+static bool applyBlurBehindWindow(HWND hwnd)
+{
+    if (!QtDwmApis::instance()->isDwmAvailable())
+        return false;
+
+    DWM_BLURBEHIND blurBehind = {0, 0, nullptr, 0};
+
+    if (dwmIsCompositionEnabled()) {
+        blurBehind.dwFlags = DWM_BB_ENABLE | DWM_BB_BLURREGION;
+        blurBehind.fEnable = TRUE;
+        blurBehind.hRgnBlur = CreateRectRgn(0, 0, -1, -1);
+    } else {
+        blurBehind.dwFlags = DWM_BB_ENABLE;
+        blurBehind.fEnable = FALSE;
+    }
+
+    const bool result = QtDwmApis::instance()->pDwmEnableBlurBehindWindow(hwnd, &blurBehind) == S_OK;
+
+    if (blurBehind.hRgnBlur)
+        DeleteObject(blurBehind.hRgnBlur);
+
+    return result;
+}
+
 // from qwidget_win.cpp, pass flags separately in case they have been "autofixed".
 static bool shouldShowMaximizeButton(const QWindow *w, Qt::WindowFlags flags)
 {
@@ -500,16 +569,10 @@ static inline void updateGLWindowSettings(const QWindow *w, HWND hwnd, Qt::Windo
     const bool isAccelerated = windowIsAccelerated(w);
     const bool hasAlpha = w->format().hasAlpha();
 
-    setWindowOpacity(hwnd, flags, hasAlpha, isAccelerated, opacity);
-}
+    if (isAccelerated && hasAlpha)
+        applyBlurBehindWindow(hwnd);
 
-[[nodiscard]] static inline int getResizeBorderThickness(const UINT dpi)
-{
-    // The width of the padded border will always be 0 if DWM composition is
-    // disabled, but since it will always be enabled and can't be programtically
-    // disabled from Windows 8, we are safe to go.
-    return GetSystemMetricsForDpi(SM_CXSIZEFRAME, dpi)
-           + GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi);
+    setWindowOpacity(hwnd, flags, hasAlpha, isAccelerated, opacity);
 }
 
 /*!
@@ -519,22 +582,21 @@ static inline void updateGLWindowSettings(const QWindow *w, HWND hwnd, Qt::Windo
 
 static QMargins invisibleMargins(QPoint screenPoint)
 {
+    if (!QOperatingSystemVersion::isWin10OrGreater())
+        return QMargins();
     POINT pt = {screenPoint.x(), screenPoint.y()};
     if (HMONITOR hMonitor = MonitorFromPoint(pt, MONITOR_DEFAULTTONULL)) {
-        UINT dpiX;
-        UINT dpiY;
-        if (SUCCEEDED(GetDpiForMonitor(hMonitor, MDT_EFFECTIVE_DPI, &dpiX, &dpiY))) {
-            const int gap = getResizeBorderThickness(dpiX);
-            return QMargins(gap, 0, gap, gap);
-        }
+        const int gap = QWindowsContext::getResizeBorderThickness(hMonitor);
+        return QMargins(gap, 0, gap, gap);
     }
     return QMargins();
 }
 
 [[nodiscard]] static inline QMargins invisibleMargins(const HWND hwnd)
 {
-    const UINT dpi = GetDpiForWindow(hwnd);
-    const int gap = getResizeBorderThickness(dpi);
+    if (!QOperatingSystemVersion::isWin10OrGreater())
+        return QMargins();
+    const int gap = QWindowsContext::getResizeBorderThickness(hwnd);
     return QMargins(gap, 0, gap, gap);
 }
 
@@ -774,10 +836,8 @@ void WindowCreationData::fromWindow(const QWindow *w, const Qt::WindowFlags flag
     } else if (topLevel) {
         if (flags & Qt::FramelessWindowHint)
             style = WS_POPUP;                // no border
-        else if (flags & Qt::WindowTitleHint)
-            style = WS_OVERLAPPED;
         else
-            style = 0;
+            style = WS_OVERLAPPED;
     } else {
         style = WS_CHILD;
     }
@@ -787,7 +847,6 @@ void WindowCreationData::fromWindow(const QWindow *w, const Qt::WindowFlags flag
     if (topLevel) {
         if ((type == Qt::Window || dialog || tool)) {
             if (!(flags & Qt::FramelessWindowHint)) {
-                style |= WS_POPUP;
                 if (flags & Qt::MSWindowsFixedSizeDialogHint) {
                     style |= WS_DLGFRAME;
                 } else {
@@ -821,11 +880,12 @@ void WindowCreationData::fromWindow(const QWindow *w, const Qt::WindowFlags flag
 
         // make mouse events fall through this window
         // NOTE: WS_EX_TRANSPARENT flag can make mouse inputs fall through a layered window
-        if (flagsIn & Qt::WindowTransparentForInput)
+        if (flags & Qt::WindowTransparentForInput)
             exStyle |= WS_EX_LAYERED | WS_EX_TRANSPARENT;
 
         // Currently only compatible with D3D surfaces, use it with care.
-        if (qEnvironmentVariableIntValue("QT_QPA_DISABLE_REDIRECTION_SURFACE"))
+        static const bool disableRedirectionSurface = qEnvironmentVariableIntValue("QT_QPA_DISABLE_REDIRECTION_SURFACE");
+        if (disableRedirectionSurface)
             exStyle |= WS_EX_NOREDIRECTIONBITMAP;
     }
 }
@@ -1052,9 +1112,12 @@ QMargins QWindowsGeometryHint::frame(const QWindow *w, DWORD style, DWORD exStyl
 {
     if (!w->isTopLevel() || shouldOmitFrameAdjustment(w->flags(), style))
         return {};
+    if (!QWindowsApi::instance()->pAdjustWindowRectExForDpi)
+        return frameOnPrimaryScreen(w, style, exStyle);
     RECT rect = {0,0,0,0};
     style &= ~DWORD(WS_OVERLAPPED); // Not permitted, see docs.
-    if (AdjustWindowRectExForDpi(&rect, style, FALSE, exStyle, unsigned(qRound(dpi))) == FALSE) {
+    if (QWindowsApi::instance()->pAdjustWindowRectExForDpi(
+            &rect, style, FALSE, exStyle, unsigned(qRound(dpi))) == FALSE) {
         qErrnoWarning("%s: AdjustWindowRectExForDpi failed", __FUNCTION__);
     }
     const QMargins result(qAbs(rect.left), qAbs(rect.top),
@@ -1092,7 +1155,8 @@ QMargins QWindowsGeometryHint::frame(const QWindow *w, const QRect &geometry,
 {
     if (!w->isTopLevel() || shouldOmitFrameAdjustment(w->flags(), style))
         return {};
-    if (QWindowsScreenManager::isSingleScreen()
+    if (!QWindowsApi::instance()->pAdjustWindowRectExForDpi
+        || QWindowsScreenManager::isSingleScreen()
         || !QWindowsContext::shouldHaveNonClientDpiScaling(w)) {
         return frameOnPrimaryScreen(w, style, exStyle);
     }
@@ -1247,10 +1311,12 @@ QMargins QWindowsBaseWindow::frameMargins_sys() const
 std::optional<QWindowsBaseWindow::TouchWindowTouchTypes>
     QWindowsBaseWindow::touchWindowTouchTypes_sys() const
 {
+    if (!QWindowsApi::instance()->pIsTouchWindow)
+        return std::nullopt;
     ULONG touchFlags = 0;
-    if (IsTouchWindow(handle(), &touchFlags) == FALSE)
-        return {};
-    TouchWindowTouchTypes result;
+    if (QWindowsApi::instance()->pIsTouchWindow(handle(), &touchFlags) == FALSE)
+        return std::nullopt;
+    TouchWindowTouchTypes result = {};
     if ((touchFlags & TWF_FINETOUCH) != 0)
         result.setFlag(TouchWindowTouchType::FineTouch);
     if ((touchFlags & TWF_WANTPALM) != 0)
@@ -1545,8 +1611,8 @@ QWindowsWindow::~QWindowsWindow()
         QDxgiVSyncService::instance()->unregisterCallback(m_vsyncServiceCallbackId);
     setFlag(WithinDestroy);
     QWindowsThemeCache::clearThemeCache(m_data.hwnd);
-    if (testFlag(TouchRegistered))
-        UnregisterTouchWindow(m_data.hwnd);
+    if (testFlag(TouchRegistered) && QWindowsApi::instance()->pUnregisterTouchWindow)
+        QWindowsApi::instance()->pUnregisterTouchWindow(m_data.hwnd);
     destroyWindow();
     destroyIcon();
 }
@@ -1573,7 +1639,7 @@ void QWindowsWindow::initialize()
             QWindowSystemInterface::handleGeometryChange<QWindowSystemInterface::SynchronousDelivery>(w, obtainedGeometry);
         }
     }
-    QWindowsWindow::setSavedDpi(GetDpiForWindow(handle()));
+    QWindowsWindow::setSavedDpi(QWindowsContext::getMostPossibleDpiForWindow(handle()));
 }
 
 QSurfaceFormat QWindowsWindow::format() const
@@ -1974,6 +2040,18 @@ void QWindowsWindow::handleHidden()
     fireExpose(QRegion());
 }
 
+void QWindowsWindow::handleCompositionSettingsChanged()
+{
+    const QWindow *w = window();
+    if ((w->surfaceType() == QWindow::OpenGLSurface
+         || w->surfaceType() == QWindow::VulkanSurface
+         || w->surfaceType() == QWindow::Direct3DSurface)
+        && w->format().hasAlpha())
+    {
+        applyBlurBehindWindow(handle());
+    }
+}
+
 qreal QWindowsWindow::dpiRelativeScale(const UINT dpi) const
 {
     return QHighDpiScaling::roundScaleFactor(qreal(dpi) / QWindowsScreen::baseDpi) /
@@ -2056,7 +2134,7 @@ void QWindowsWindow::handleDpiChanged(HWND hwnd, WPARAM wParam, LPARAM lParam)
 
 void QWindowsWindow::handleDpiChangedAfterParent(HWND hwnd)
 {
-    const UINT dpi = GetDpiForWindow(hwnd);
+    const UINT dpi = QWindowsContext::getMostPossibleDpiForWindow(hwnd);
     const qreal scale = dpiRelativeScale(dpi);
     setSavedDpi(dpi);
 
@@ -2195,7 +2273,7 @@ void QWindowsWindow::handleResized(int wParam, LPARAM lParam)
         int correctHeight = monitorInfo.rcWork.bottom - monitorInfo.rcWork.top;
 
         if (!m_data.flags.testFlag(Qt::FramelessWindowHint)) {
-            const int borderWidth = invisibleMargins(m_data.hwnd).left();
+            const int borderWidth = QWindowsContext::getResizeBorderThickness(m_data.hwnd);
             correctLeft -= borderWidth;
             correctTop -= borderWidth;
             correctWidth += borderWidth * 2;
@@ -2395,12 +2473,21 @@ bool QWindowsWindow::handleWmPaint(HWND hwnd, UINT message,
         return false;
     PAINTSTRUCT ps;
 
-    // GL software rendering (QTBUG-58178) with some AMD cards
+    // GL software rendering (QTBUG-58178) and Windows 7/Aero off with some AMD cards
     // (QTBUG-60527) need InvalidateRect() to suppress artifacts while resizing.
-    if (testFlag(OpenGLSurface) && isSoftwareGl())
+    if (testFlag(OpenGLSurface) && (isSoftwareGl() || !dwmIsCompositionEnabled()))
         InvalidateRect(hwnd, nullptr, false);
 
     BeginPaint(hwnd, &ps);
+
+    // Observed painting problems with Aero style disabled (QTBUG-7865).
+    if (Q_UNLIKELY(!dwmIsCompositionEnabled())
+        && ((testFlag(OpenGLSurface) && testFlag(OpenGLDoubleBuffered))
+            || testFlag(VulkanSurface)
+            || testFlag(Direct3DSurface)))
+    {
+        SelectClipRgn(ps.hdc, nullptr);
+    }
 
     // If the a window is obscured by another window (such as a child window)
     // we still need to send isExposed=true, for compatibility.
@@ -2791,8 +2878,13 @@ bool QWindowsWindow::handleGeometryChangingMessage(MSG *message, const QWindow *
     // Check the suggestedGeometry against the current one to only discard during
     // resize, and not a plain move. We also look for SWP_NOSIZE since that, too,
     // implies an identical size, and comparing QRects wouldn't work with null cx/cy
-    if (!(windowPos->flags & SWP_NOSIZE) && suggestedGeometry.size() != qWindow->geometry().size())
-        windowPos->flags |= SWP_NOCOPYBITS;
+    if (!(windowPos->flags & SWP_NOSIZE)) {
+        if (const QWindowsWindow *platformWindow = QWindowsWindow::windowsWindowOf(qWindow)) {
+            if (suggestedGeometry.size() != platformWindow->geometry().size()) {
+                windowPos->flags |= SWP_NOCOPYBITS;
+            }
+        }
+    }
 
     if ((windowPos->flags & SWP_NOZORDER) == 0) {
         if (QWindowsWindow *platformWindow = QWindowsWindow::windowsWindowOf(qWindow)) {
@@ -3163,7 +3255,7 @@ bool QWindowsWindow::handleNonClientHitTest(const QPoint &globalPos, LRESULT *re
             return true;
         }
         if (localPos.y() < 0) {
-            const int topResizeBarPos = invisibleMargins(m_data.hwnd).left() - frameMargins().top();
+            const int topResizeBarPos = QWindowsContext::getResizeBorderThickness(m_data.hwnd) - frameMargins().top();
             if (localPos.y() < topResizeBarPos) {
                 *result = HTCAPTION; // Extend caption over top resize bar, let's user move the window.
                 return true;
@@ -3353,10 +3445,12 @@ enum : WORD {
 
 bool QWindowsWindow::setDarkBorderToWindow(HWND hwnd, bool d)
 {
+    if (!QtDwmApis::instance()->isDwmAvailable())
+        return false;
     const BOOL darkBorder = d ? TRUE : FALSE;
     const bool ok =
-        SUCCEEDED(DwmSetWindowAttribute(hwnd, DwmwaUseImmersiveDarkMode, &darkBorder, sizeof(darkBorder)))
-        || SUCCEEDED(DwmSetWindowAttribute(hwnd, DwmwaUseImmersiveDarkModeBefore20h1, &darkBorder, sizeof(darkBorder)));
+        SUCCEEDED(QtDwmApis::instance()->pDwmSetWindowAttribute(hwnd, DwmwaUseImmersiveDarkMode, &darkBorder, sizeof(darkBorder)))
+        || SUCCEEDED(QtDwmApis::instance()->pDwmSetWindowAttribute(hwnd, DwmwaUseImmersiveDarkModeBefore20h1, &darkBorder, sizeof(darkBorder)));
     if (!ok)
         qCWarning(lcQpaWindow, "%s: Unable to set %s window border.", __FUNCTION__, d ? "dark" : "light");
     return ok;
@@ -3475,6 +3569,9 @@ void QWindowsWindow::registerTouchWindow()
     if ((QWindowsContext::instance()->systemInfo() & QWindowsContext::SI_SupportsTouch) == 0)
         return;
 
+    if (!QWindowsApi::instance()->pRegisterTouchWindow)
+        return;
+
     // Initially register or re-register to change the flags
     const auto touchTypes = QWindowsIntegration::instance()->touchWindowTouchType();
     if (testFlag(TouchRegistered)) {
@@ -3488,7 +3585,7 @@ void QWindowsWindow::registerTouchWindow()
         touchFlags |= TWF_FINETOUCH;
     if (touchTypes.testFlag(TouchWindowTouchType::WantPalmTouch))
         touchFlags |= TWF_WANTPALM;
-    if (RegisterTouchWindow(m_data.hwnd, touchFlags))
+    if (QWindowsApi::instance()->pRegisterTouchWindow(m_data.hwnd, touchFlags))
         setFlag(TouchRegistered);
     else
         qErrnoWarning("RegisterTouchWindow() failed for window '%s'.", qPrintable(window()->objectName()));

@@ -173,6 +173,7 @@ public:
     // sort the inline ones. Until then, new entries should be added to
     // QOperatingSystemVersionUnexported.
 #if QT_VERSION < QT_VERSION_CHECK(7, 0, 0) && !defined(QT_BOOTSTRAPPED)
+    static const QOperatingSystemVersion WindowsVista;
     static const QOperatingSystemVersion Windows7;
     static const QOperatingSystemVersion Windows8;
     static const QOperatingSystemVersion Windows8_1;
@@ -203,6 +204,7 @@ public:
     static const QOperatingSystemVersion Android10;
     static const QOperatingSystemVersion Android11;
 #else
+    static constexpr QOperatingSystemVersionBase WindowsVista { QOperatingSystemVersionBase::Windows, 6, 0 };
     static constexpr QOperatingSystemVersionBase Windows7 { QOperatingSystemVersionBase::Windows, 6, 1 };
     static constexpr QOperatingSystemVersionBase Windows8 { QOperatingSystemVersionBase::Windows, 6, 2 };
     static constexpr QOperatingSystemVersionBase Windows8_1 { QOperatingSystemVersionBase::Windows, 6, 3 };
@@ -234,6 +236,12 @@ public:
     static constexpr QOperatingSystemVersionBase Android11 { QOperatingSystemVersionBase::Android, 11, 0 };
 #endif
 
+    static constexpr QOperatingSystemVersionBase Windows10_1507 { QOperatingSystemVersionBase::Windows, 10, 0, 10240 }; // TH1
+    static constexpr QOperatingSystemVersionBase Windows10_1511 { QOperatingSystemVersionBase::Windows, 10, 0, 10586 }; // TH2
+    static constexpr QOperatingSystemVersionBase Windows10_1607 { QOperatingSystemVersionBase::Windows, 10, 0, 14393 }; // RS1
+    static constexpr QOperatingSystemVersionBase Windows10_1703 { QOperatingSystemVersionBase::Windows, 10, 0, 15063 }; // RS2
+    static constexpr QOperatingSystemVersionBase Windows10_1709 { QOperatingSystemVersionBase::Windows, 10, 0, 16299 }; // RS3
+    static constexpr QOperatingSystemVersionBase Windows10_1803 { QOperatingSystemVersionBase::Windows, 10, 0, 17134 }; // RS4
     static constexpr QOperatingSystemVersionBase Windows10_1809 { QOperatingSystemVersionBase::Windows, 10, 0, 17763 }; // RS5
     static constexpr QOperatingSystemVersionBase Windows10_1903 { QOperatingSystemVersionBase::Windows, 10, 0, 18362 }; // 19H1
     static constexpr QOperatingSystemVersionBase Windows10_1909 { QOperatingSystemVersionBase::Windows, 10, 0, 18363 }; // 19H2
@@ -251,6 +259,40 @@ public:
     static constexpr QOperatingSystemVersionBase Android13 { QOperatingSystemVersionBase::Android, 13, 0 };
 
     static constexpr QOperatingSystemVersionBase MacOSVentura { QOperatingSystemVersionBase::MacOS, 13, 0 };
+
+#ifdef Q_OS_WINDOWS
+#  define MAKE_VERSION_FUNCTION(Name, Version) \
+    [[nodiscard]] static inline bool isWin##Name##OrGreater() \
+    { \
+        static const bool result = QOperatingSystemVersion::current() >= QOperatingSystemVersion::Windows##Version; \
+        return result; \
+    }
+    MAKE_VERSION_FUNCTION(Vista, Vista)
+    MAKE_VERSION_FUNCTION(7, 7)
+    MAKE_VERSION_FUNCTION(8, 8)
+    MAKE_VERSION_FUNCTION(8Point1, 8_1)
+    MAKE_VERSION_FUNCTION(10, 10)
+    MAKE_VERSION_FUNCTION(10TH1, 10_1507)
+    MAKE_VERSION_FUNCTION(10TH2, 10_1511)
+    MAKE_VERSION_FUNCTION(10RS1, 10_1607)
+    MAKE_VERSION_FUNCTION(10RS2, 10_1703)
+    MAKE_VERSION_FUNCTION(10RS3, 10_1709)
+    MAKE_VERSION_FUNCTION(10RS4, 10_1803)
+    MAKE_VERSION_FUNCTION(10RS5, 10_1809)
+    MAKE_VERSION_FUNCTION(1019H1, 10_1903)
+    MAKE_VERSION_FUNCTION(1019H2, 10_1909)
+    MAKE_VERSION_FUNCTION(1020H1, 10_2004)
+    MAKE_VERSION_FUNCTION(1020H2, 10_20H2)
+    MAKE_VERSION_FUNCTION(1021H1, 10_21H1)
+    MAKE_VERSION_FUNCTION(1021H2, 10_21H2)
+    MAKE_VERSION_FUNCTION(1022H2, 10_22H2)
+    MAKE_VERSION_FUNCTION(11, 11)
+    MAKE_VERSION_FUNCTION(1121H2, 11_21H2)
+    MAKE_VERSION_FUNCTION(1122H2, 11_22H2)
+    MAKE_VERSION_FUNCTION(1123H2, 11_23H2)
+    MAKE_VERSION_FUNCTION(1124H2, 11_24H2)
+#  undef MAKE_VERSION_FUNCTION
+#endif // Q_OS_WINDOWS
 
     constexpr QOperatingSystemVersion(const QOperatingSystemVersionBase &osversion)
         : QOperatingSystemVersionUnexported(osversion) {}

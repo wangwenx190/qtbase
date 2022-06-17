@@ -84,10 +84,11 @@ if(GCC OR CLANG)
     set(QT_CFLAGS_OPTIMIZE "-O2")
     set(QT_CFLAGS_OPTIMIZE_FULL "-O3")
     set(QT_CFLAGS_OPTIMIZE_DEBUG "-Og")
-    set(QT_CFLAGS_OPTIMIZE_SIZE "-Os")
 
     if(CLANG)
         set(QT_CFLAGS_OPTIMIZE_SIZE "-Oz")
+    else()
+        set(QT_CFLAGS_OPTIMIZE_SIZE "-Os")
     endif()
 endif()
 
@@ -100,18 +101,21 @@ endif()
 # Windows MSVC
 if(MSVC)
     set(QT_CFLAGS_OPTIMIZE "-O2")
-    if(NOT CLANG)
-        # -Ob3 was introduced in Visual Studio 2019 version 16.0
-        # However clang-cl can't recognize it.
+    # -Ob3 was introduced in Visual Studio 2019 version 16.0
+    # However clang-cl can't recognize it.
+    if(MSVC_VERSION GREATER_EQUAL 1920 AND NOT CLANG)
         string(APPEND QT_CFLAGS_OPTIMIZE " -Ob3 ")
+    else()
+        string(APPEND QT_CFLAGS_OPTIMIZE " -Ob2 ")
     endif()
     set(QT_CFLAGS_OPTIMIZE_DEBUG "-Od")
-    set(QT_CFLAGS_OPTIMIZE_SIZE "-O1")
+    set(QT_CFLAGS_OPTIMIZE_SIZE "-O1 -Ob2")
     set(QT_CFLAGS_OPTIMIZE_VALID_VALUES "/O2" "/O1" "/Od" "/Ob0" "/Ob1" "/Ob2" "/Ob3" "/O0" "-O0")
 
     if(CLANG)
-        set(QT_CFLAGS_OPTIMIZE_FULL "/clang:-O3")
-        set(QT_CFLAGS_OPTIMIZE_SIZE "/clang:-Oz")
+        set(QT_CFLAGS_OPTIMIZE "/clang:-O3 -Ob2")
+        set(QT_CFLAGS_OPTIMIZE_FULL "/clang:-O3 -Ob2")
+        set(QT_CFLAGS_OPTIMIZE_SIZE "/clang:-Oz -Ob2")
     endif()
 endif()
 

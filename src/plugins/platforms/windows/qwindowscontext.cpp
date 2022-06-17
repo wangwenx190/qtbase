@@ -7,6 +7,7 @@
 #include "qwindowswindow.h"
 #include "qwindowskeymapper.h"
 #include "qwindowsnativeinterface.h"
+#include "qwindowsmousehandler.h"
 #include "qwindowspointerhandler.h"
 #include "qtwindowsglobal.h"
 #include "qwindowsmenu.h"
@@ -140,6 +141,7 @@ struct QWindowsContextPrivate {
     HDC m_displayContext = nullptr;
     int m_defaultDPI = 96;
     QWindowsKeyMapper m_keyMapper;
+    QWindowsMouseHandler m_mouseHandler;
     QWindowsPointerHandler m_pointerHandler;
     QWindowsMimeRegistry m_mimeConverter;
     QWindowsScreenManager m_screenManager;
@@ -160,7 +162,7 @@ bool QWindowsContextPrivate::m_v2DpiAware = false;
 QWindowsContextPrivate::QWindowsContextPrivate()
     : m_oleInitializeResult(OleInitialize(nullptr))
 {
-    if (m_pointerHandler.touchDevice())
+    if (m_pointerHandler.touchDevice() || m_mouseHandler.touchDevice())
         m_systemInfo |= QWindowsContext::SI_SupportsTouch;
     m_displayContext = GetDC(nullptr);
     m_defaultDPI = GetDeviceCaps(m_displayContext, LOGPIXELSY);
@@ -204,7 +206,8 @@ QWindowsContext::~QWindowsContext()
     unregisterWindowClasses();
     if (d->m_oleInitializeResult == S_OK || d->m_oleInitializeResult == S_FALSE) {
 #ifdef QT_USE_FACTORY_CACHE_REGISTRATION
-        detail::QWinRTFactoryCacheRegistration::clearAllCaches();
+        if (QOperatingSystemVersion::isWin10OrGreater())
+            detail::QWinRTFactoryCacheRegistration::clearAllCaches();
 #endif
         OleUninitialize();
     }
@@ -224,7 +227,8 @@ bool QWindowsContext::initTouch(unsigned integrationOptions)
 {
     if (d->m_systemInfo & QWindowsContext::SI_SupportsTouch)
         return true;
-    auto touchDevice = d->m_pointerHandler.touchDevice();
+    const bool usePointerHandler = (d->m_systemInfo & QWindowsContext::SI_SupportsPointer) != 0;
+    auto touchDevice = usePointerHandler ? d->m_pointerHandler.touchDevice() : d->m_mouseHandler.touchDevice();
     if (touchDevice.isNull()) {
         const bool mouseEmulation =
             (integrationOptions & QWindowsIntegration::DontPassOsMouseEventsSynthesizedFromTouch) == 0;
@@ -233,6 +237,7 @@ bool QWindowsContext::initTouch(unsigned integrationOptions)
     if (touchDevice.isNull())
         return false;
     d->m_pointerHandler.setTouchDevice(touchDevice);
+    d->m_mouseHandler.setTouchDevice(touchDevice);
     QWindowSystemInterface::registerInputDevice(touchDevice.data());
 
     d->m_systemInfo |= QWindowsContext::SI_SupportsTouch;
@@ -270,6 +275,18 @@ bool QWindowsContext::disposeTablet()
 #else
     return false;
 #endif
+}
+
+bool QWindowsContext::initPointer(unsigned integrationOptions)
+{
+    if (integrationOptions & QWindowsIntegration::DontUseWMPointer)
+        return false;
+
+    if (!QWindowsApi::instance()->supportsPointerApi())
+        return false;
+
+    d->m_systemInfo |= QWindowsContext::SI_SupportsPointer;
+    return true;
 }
 
 extern "C" LRESULT QT_WIN_CALLBACK qWindowsPowerWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
@@ -338,18 +355,27 @@ void QWindowsContext::setDetectAltGrModifier(bool a)
 [[nodiscard]] static inline QtWindows::DpiAwareness
     dpiAwarenessContextToQtDpiAwareness(DPI_AWARENESS_CONTEXT context)
 {
-    // IsValidDpiAwarenessContext() will handle the NULL pointer case.
-    if (!IsValidDpiAwarenessContext(context))
+    if (!QWindowsApi::instance()->pIsValidDpiAwarenessContext
+            || !QWindowsApi::instance()->pAreDpiAwarenessContextsEqual) {
         return QtWindows::DpiAwareness::Invalid;
-    if (AreDpiAwarenessContextsEqual(context, DPI_AWARENESS_CONTEXT_UNAWARE_GDISCALED))
+    }
+    // IsValidDpiAwarenessContext() will handle the NULL pointer case.
+    if (!QWindowsApi::instance()->pIsValidDpiAwarenessContext(context))
+        return QtWindows::DpiAwareness::Invalid;
+    if (QWindowsApi::instance()->pAreDpiAwarenessContextsEqual(
+                context, DPI_AWARENESS_CONTEXT_UNAWARE_GDISCALED))
         return QtWindows::DpiAwareness::Unaware_GdiScaled;
-    if (AreDpiAwarenessContextsEqual(context, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2))
+    if (QWindowsApi::instance()->pAreDpiAwarenessContextsEqual(
+                context, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2))
         return QtWindows::DpiAwareness::PerMonitorVersion2;
-    if (AreDpiAwarenessContextsEqual(context, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE))
+    if (QWindowsApi::instance()->pAreDpiAwarenessContextsEqual(
+                context, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE))
         return QtWindows::DpiAwareness::PerMonitor;
-    if (AreDpiAwarenessContextsEqual(context, DPI_AWARENESS_CONTEXT_SYSTEM_AWARE))
+    if (QWindowsApi::instance()->pAreDpiAwarenessContextsEqual(
+                context, DPI_AWARENESS_CONTEXT_SYSTEM_AWARE))
         return QtWindows::DpiAwareness::System;
-    if (AreDpiAwarenessContextsEqual(context, DPI_AWARENESS_CONTEXT_UNAWARE))
+    if (QWindowsApi::instance()->pAreDpiAwarenessContextsEqual(
+                context, DPI_AWARENESS_CONTEXT_UNAWARE))
         return QtWindows::DpiAwareness::Unaware;
     return QtWindows::DpiAwareness::Invalid;
 }
@@ -358,8 +384,28 @@ QtWindows::DpiAwareness QWindowsContext::windowDpiAwareness(HWND hwnd)
 {
     if (!hwnd)
         return QtWindows::DpiAwareness::Invalid;
-    const auto context = GetWindowDpiAwarenessContext(hwnd);
-    return dpiAwarenessContextToQtDpiAwareness(context);
+    if (QWindowsApi::instance()->pGetWindowDpiAwarenessContext) {
+        const auto context = QWindowsApi::instance()->pGetWindowDpiAwarenessContext(hwnd);
+        return dpiAwarenessContextToQtDpiAwareness(context);
+    }
+    qCWarning(lcQpaWindow) << "Current platform doesn't support querying DPI awareness "
+                              "mode for a specific window, using current process's DPI "
+                              "awareness mode instead.";
+    return processDpiAwareness();
+}
+
+[[nodiscard]] static inline QtWindows::DpiAwareness
+    processDpiAwarenessToQtDpiAwareness(PROCESS_DPI_AWARENESS pda)
+{
+    switch (pda) {
+    case PROCESS_DPI_UNAWARE:
+        return QtWindows::DpiAwareness::Unaware;
+    case PROCESS_SYSTEM_DPI_AWARE:
+        return QtWindows::DpiAwareness::System;
+    case PROCESS_PER_MONITOR_DPI_AWARE:
+        return QtWindows::DpiAwareness::PerMonitor;
+    }
+    return QtWindows::DpiAwareness::Invalid;
 }
 
 QtWindows::DpiAwareness QWindowsContext::processDpiAwareness()
@@ -371,8 +417,25 @@ QtWindows::DpiAwareness QWindowsContext::processDpiAwareness()
     // return the default DPI_AWARENESS_CONTEXT for the process if
     // SetThreadDpiAwarenessContext() was never called. So we can use
     // it as an equivalent.
-    const auto context = GetThreadDpiAwarenessContext();
-    return dpiAwarenessContextToQtDpiAwareness(context);
+    if (QWindowsApi::instance()->pGetThreadDpiAwarenessContext) {
+        const auto context = QWindowsApi::instance()->pGetThreadDpiAwarenessContext();
+        return dpiAwarenessContextToQtDpiAwareness(context);
+    }
+    if (QWindowsApi::instance()->pGetProcessDpiAwareness) {
+        PROCESS_DPI_AWARENESS pda = PROCESS_DPI_UNAWARE;
+        const HRESULT hr = QWindowsApi::instance()->pGetProcessDpiAwareness(nullptr, &pda);
+        if (SUCCEEDED(hr)) {
+            return processDpiAwarenessToQtDpiAwareness(pda);
+        } else {
+            qCWarning(lcQpaWindow).nospace().noquote()
+                    << "GetProcessDpiAwareness() failed: "
+                    << QSystemError::windowsComString(hr);
+        }
+    }
+    if (IsProcessDPIAware()) {
+        return QtWindows::DpiAwareness::System;
+    }
+    return QtWindows::DpiAwareness::Unaware;
 }
 
 [[nodiscard]] static inline DPI_AWARENESS_CONTEXT
@@ -425,24 +488,67 @@ QDebug operator<<(QDebug d, QtWindows::DpiAwareness dpiAwareness)
 }
 #endif
 
+[[nodiscard]] static inline PROCESS_DPI_AWARENESS
+    qtDpiAwarenessToProcessDpiAwareness(QtWindows::DpiAwareness awareness)
+{
+    switch (awareness) {
+    case QtWindows::DpiAwareness::Invalid:
+        return PROCESS_DPI_AWARENESS(-1);
+    case QtWindows::DpiAwareness::Unaware:
+    case QtWindows::DpiAwareness::Unaware_GdiScaled:
+        return PROCESS_DPI_UNAWARE;
+    case QtWindows::DpiAwareness::System:
+        return PROCESS_SYSTEM_DPI_AWARE;
+    case QtWindows::DpiAwareness::PerMonitor:
+    case QtWindows::DpiAwareness::PerMonitorVersion2:
+        return PROCESS_PER_MONITOR_DPI_AWARE;
+    }
+    return PROCESS_DPI_AWARENESS(-1);
+}
+
 bool QWindowsContext::setProcessDpiAwareness(QtWindows::DpiAwareness dpiAwareness)
 {
     qCDebug(lcQpaWindow) << __FUNCTION__ << dpiAwareness;
     if (processDpiAwareness() == dpiAwareness)
         return true;
-    const auto context = qtDpiAwarenessToDpiAwarenessContext(dpiAwareness);
-    if (!IsValidDpiAwarenessContext(context)) {
-        qCWarning(lcQpaWindow) << dpiAwareness << "is not supported by current system.";
-        return false;
+    if (QWindowsApi::instance()->pIsValidDpiAwarenessContext
+            && QWindowsApi::instance()->pSetProcessDpiAwarenessContext) {
+        const auto context = qtDpiAwarenessToDpiAwarenessContext(dpiAwareness);
+        if (!QWindowsApi::instance()->pIsValidDpiAwarenessContext(context)) {
+            qCWarning(lcQpaWindow) << dpiAwareness << "is not supported by current system.";
+            return false;
+        }
+        if (!QWindowsApi::instance()->pSetProcessDpiAwarenessContext(context)) {
+            qCWarning(lcQpaWindow).noquote().nospace()
+                << "SetProcessDpiAwarenessContext() failed: "
+                << QSystemError::windowsString()
+                << "\nQt's default DPI awareness context is "
+                << "DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2. If you know what you "
+                << "are doing, you can overwrite this default using qt.conf "
+                << "(https://doc.qt.io/qt-6/highdpi.html#configuring-windows).";
+            return false;
+        }
+        return true;
     }
-    if (!SetProcessDpiAwarenessContext(context)) {
-        qCWarning(lcQpaWindow).noquote().nospace()
-            << "SetProcessDpiAwarenessContext() failed: "
-            << QSystemError::windowsString()
-            << "\nQt's default DPI awareness context is "
-            << "DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2. If you know what you "
-            << "are doing, you can overwrite this default using qt.conf "
-            << "(https://doc.qt.io/qt-6/highdpi.html#configuring-windows).";
+    if (QWindowsApi::instance()->pSetProcessDpiAwareness) {
+        const PROCESS_DPI_AWARENESS pda = qtDpiAwarenessToProcessDpiAwareness(dpiAwareness);
+        if (int(pda) == -1) {
+            qCWarning(lcQpaWindow).nospace().noquote()
+                    << "Failed to retrieve the current process's DPI awareness mode.";
+            return false;
+        }
+        const HRESULT hr = QWindowsApi::instance()->pSetProcessDpiAwareness(pda);
+        if (FAILED(hr)) {
+            qCWarning(lcQpaWindow).nospace().noquote()
+                    << "SetProcessDpiAwareness() failed: "
+                    << QSystemError::windowsComString(hr);
+            return false;
+        }
+        return true;
+    }
+    if (!SetProcessDPIAware()) {
+        qCWarning(lcQpaWindow).nospace().noquote()
+                << "SetProcessDPIAware() failed: " << QSystemError::windowsString();
         return false;
     }
     QWindowsContextPrivate::m_v2DpiAware
@@ -717,12 +823,16 @@ QWindow *QWindowsContext::findWindow(HWND hwnd) const
 
 QWindow *QWindowsContext::windowUnderMouse() const
 {
-    return d->m_pointerHandler.windowUnderMouse();
+    return (d->m_systemInfo & QWindowsContext::SI_SupportsPointer) ?
+        d->m_pointerHandler.windowUnderMouse() : d->m_mouseHandler.windowUnderMouse();
 }
 
 void QWindowsContext::clearWindowUnderMouse()
 {
-    d->m_pointerHandler.clearWindowUnderMouse();
+    if (d->m_systemInfo & QWindowsContext::SI_SupportsPointer)
+        d->m_pointerHandler.clearWindowUnderMouse();
+    else
+        d->m_mouseHandler.clearWindowUnderMouse();
 }
 
 /*!
@@ -868,8 +978,8 @@ void QWindowsContext::forceNcCalcSize(HWND hwnd)
 bool QWindowsContext::systemParametersInfo(unsigned action, unsigned param, void *out,
                                            unsigned dpi)
 {
-    const BOOL result = dpi != 0
-        ? SystemParametersInfoForDpi(action, param, out, 0, dpi)
+    const BOOL result = (dpi != 0) && (QWindowsApi::instance()->pSystemParametersInfoForDpi != nullptr)
+        ? QWindowsApi::instance()->pSystemParametersInfoForDpi(action, param, out, 0, dpi)
         : SystemParametersInfo(action, param, out, 0);
     return result == TRUE;
 }
@@ -916,7 +1026,8 @@ bool QWindowsContext::shouldHaveNonClientDpiScaling(const QWindow *window)
     if (QWindowsContextPrivate::m_v2DpiAware)
         return true;
 
-    return window->isTopLevel()
+    return QOperatingSystemVersion::isWin10OrGreater()
+        && window->isTopLevel()
         && !window->property(QWindowsWindow::embeddedNativeParentHandleProperty).isValid()
 #if QT_CONFIG(opengl) // /QTBUG-62901, EnableNonClientDpiScaling has problems with GL
         && (window->surfaceType() != QSurface::OpenGLSurface
@@ -955,9 +1066,11 @@ static inline bool isInputMessage(UINT m)
 // Note: This only works within WM_NCCREATE
 static bool enableNonClientDpiScaling(HWND hwnd)
 {
+    if (!QWindowsApi::instance()->pEnableNonClientDpiScaling)
+        return false;
     bool result = false;
     if (QWindowsContext::windowDpiAwareness(hwnd) == QtWindows::DpiAwareness::PerMonitor) {
-        result = EnableNonClientDpiScaling(hwnd) != FALSE;
+        result = QWindowsApi::instance()->pEnableNonClientDpiScaling(hwnd) != FALSE;
         if (!result) {
             const DWORD errorCode = GetLastError();
             qErrnoWarning(int(errorCode), "EnableNonClientDpiScaling() failed for HWND %p (%lu)",
@@ -1035,7 +1148,8 @@ bool QWindowsContext::windowsProc(HWND hwnd, UINT message,
 
     switch (et) {
     case QtWindows::GestureEvent:
-        // TODO???
+        if (!(d->m_systemInfo & QWindowsContext::SI_SupportsPointer))
+            return sessionManagerInteractionBlocked() || d->m_mouseHandler.translateGestureEvent(platformWindow->window(), hwnd, et, msg, result);
         break;
     case QtWindows::InputMethodOpenCandidateWindowEvent:
     case QtWindows::InputMethodCloseCandidateWindowEvent:
@@ -1175,11 +1289,16 @@ bool QWindowsContext::windowsProc(HWND hwnd, UINT message,
     case QtWindows::NonClientMouseEvent:
         if (!platformWindow->frameStrutEventsEnabled())
             break;
-        return sessionManagerInteractionBlocked() || d->m_pointerHandler.translateMouseEvent(platformWindow->window(), hwnd, et, msg, result);
+        if ((d->m_systemInfo & QWindowsContext::SI_SupportsPointer))
+            return sessionManagerInteractionBlocked() || d->m_pointerHandler.translateMouseEvent(platformWindow->window(), hwnd, et, msg, result);
+        else
+            return sessionManagerInteractionBlocked() || d->m_mouseHandler.translateMouseEvent(platformWindow->window(), hwnd, et, msg, result);
     case QtWindows::NonClientPointerEvent:
         if (!platformWindow->frameStrutEventsEnabled())
             break;
-        return sessionManagerInteractionBlocked() || d->m_pointerHandler.translatePointerEvent(platformWindow->window(), hwnd, et, msg, result);
+        if ((d->m_systemInfo & QWindowsContext::SI_SupportsPointer))
+            return sessionManagerInteractionBlocked() || d->m_pointerHandler.translatePointerEvent(platformWindow->window(), hwnd, et, msg, result);
+        break;
     case QtWindows::EnterSizeMoveEvent:
         platformWindow->setFlag(QWindowsWindow::ResizeMoveActive);
         if (!IsZoomed(hwnd))
@@ -1193,7 +1312,8 @@ bool QWindowsContext::windowsProc(HWND hwnd, UINT message,
             platformWindow->updateRestoreGeometry();
         return true;
     case QtWindows::ScrollEvent:
-        // TODO???
+        if (!(d->m_systemInfo & QWindowsContext::SI_SupportsPointer))
+            return sessionManagerInteractionBlocked() || d->m_mouseHandler.translateScrollEvent(platformWindow->window(), hwnd, msg, result);
         break;
     case QtWindows::MouseWheelEvent:
     case QtWindows::MouseEvent:
@@ -1204,14 +1324,20 @@ bool QWindowsContext::windowsProc(HWND hwnd, UINT message,
                 window = window->parent();
             if (!window)
                 return false;
-            return sessionManagerInteractionBlocked() || d->m_pointerHandler.translateMouseEvent(window, hwnd, et, msg, result);
+            if (d->m_systemInfo & QWindowsContext::SI_SupportsPointer)
+                return sessionManagerInteractionBlocked() || d->m_pointerHandler.translateMouseEvent(window, hwnd, et, msg, result);
+            else
+                return sessionManagerInteractionBlocked() || d->m_mouseHandler.translateMouseEvent(window, hwnd, et, msg, result);
         }
         break;
     case QtWindows::TouchEvent:
-        // TODO???
+        if (!(d->m_systemInfo & QWindowsContext::SI_SupportsPointer))
+            return sessionManagerInteractionBlocked() || d->m_mouseHandler.translateTouchEvent(platformWindow->window(), hwnd, et, msg, result);
         break;
     case QtWindows::PointerEvent:
-        return sessionManagerInteractionBlocked() || d->m_pointerHandler.translatePointerEvent(platformWindow->window(), hwnd, et, msg, result);
+        if (d->m_systemInfo & QWindowsContext::SI_SupportsPointer)
+            return sessionManagerInteractionBlocked() || d->m_pointerHandler.translatePointerEvent(platformWindow->window(), hwnd, et, msg, result);
+        break;
     case QtWindows::FocusInEvent: // see QWindowsWindow::requestActivateWindow().
     case QtWindows::FocusOutEvent:
         handleFocusEvent(et, platformWindow);
@@ -1236,6 +1362,7 @@ bool QWindowsContext::windowsProc(HWND hwnd, UINT message,
         return true;
     }
     case QtWindows::CompositionSettingsChanged:
+        platformWindow->handleCompositionSettingsChanged();
         return true;
     case QtWindows::ActivateWindowEvent:
         if (platformWindow->window()->flags() & Qt::WindowDoesNotAcceptFocus) {
@@ -1414,7 +1541,7 @@ void QWindowsContext::handleExitSizeMove(QWindow *window)
     //    Mouse is left in pressed state after press on size grip (inside window),
     //    no further mouse events are received
     // For cases 1,3, intercept WM_EXITSIZEMOVE to sync the buttons.
-    const Qt::MouseButtons currentButtons = QWindowsPointerHandler::queryMouseButtons();
+    const Qt::MouseButtons currentButtons = QWindowsMouseHandler::queryMouseButtons();
     const Qt::MouseButtons appButtons = QGuiApplication::mouseButtons();
     if (currentButtons == appButtons)
         return;
@@ -1430,7 +1557,10 @@ void QWindowsContext::handleExitSizeMove(QWindow *window)
                 currentButtons, button, type, keyboardModifiers);
         }
     }
-    d->m_pointerHandler.clearEvents();
+    if (d->m_systemInfo & QWindowsContext::SI_SupportsPointer)
+        d->m_pointerHandler.clearEvents();
+    else
+        d->m_mouseHandler.clearEvents();
 }
 
 bool QWindowsContext::asyncExpose() const
@@ -1554,6 +1684,138 @@ bool QWindowsContext::filterNativeEvent(QWindow *window, MSG *msg, LRESULT *resu
         return true;
     }
     return false;
+}
+
+UINT QWindowsContext::getDpiForWindow(const HWND hWnd)
+{
+    Q_ASSERT(hWnd);
+    if (!hWnd)
+        return 0;
+    if (QWindowsApi::instance()->pGetDpiForWindow)
+        return QWindowsApi::instance()->pGetDpiForWindow(hWnd);
+    if (const HDC hdc = GetDC(hWnd)) {
+        const int dpiX = GetDeviceCaps(hdc, LOGPIXELSX);
+        ReleaseDC(hWnd, hdc);
+        if (dpiX > 0)
+            return dpiX;
+    }
+    return 0;
+}
+
+UINT QWindowsContext::getDpiForMonitor(const HMONITOR hMonitor)
+{
+    Q_ASSERT(hMonitor);
+    if (!hMonitor)
+        return 0;
+    if (QWindowsApi::instance()->pGetDpiForMonitor) {
+        UINT dpiX = 0;
+        UINT dpiY = 0;
+        const HRESULT hr = QWindowsApi::instance()->pGetDpiForMonitor(hMonitor, MDT_EFFECTIVE_DPI, &dpiX, &dpiY);
+        if (SUCCEEDED(hr) && (dpiX > 0))
+            return dpiX;
+    }
+    MONITORINFOEXW monitorInfo{};
+    monitorInfo.cbSize = sizeof(monitorInfo);
+    GetMonitorInfoW(hMonitor, &monitorInfo);
+    if (const HDC hdc = CreateDCW(monitorInfo.szDevice, monitorInfo.szDevice, nullptr, nullptr)) {
+        const int dpiX = GetDeviceCaps(hdc, LOGPIXELSX);
+        DeleteDC(hdc);
+        if (dpiX > 0)
+            return dpiX;
+    }
+    return 0;
+}
+
+UINT QWindowsContext::getDpiForPrimaryMonitor()
+{
+    if (const HMONITOR hMonitor = MonitorFromWindow(GetDesktopWindow(), MONITOR_DEFAULTTOPRIMARY))
+        return getDpiForMonitor(hMonitor);
+    return 0;
+}
+
+UINT QWindowsContext::getMostPossibleDpiForWindow(const HWND hWnd)
+{
+    Q_ASSERT(hWnd);
+    if (!hWnd)
+        return 0;
+    UINT dpi = getDpiForWindow(hWnd);
+    if (dpi > 0)
+        return dpi;
+    if (const HMONITOR hMonitor = MonitorFromWindow(hWnd, MONITOR_DEFAULTTONEAREST)) {
+        dpi = getDpiForMonitor(hMonitor);
+        if (dpi > 0)
+            return dpi;
+    }
+    dpi = getDpiForPrimaryMonitor();
+    if (dpi > 0)
+        return dpi;
+    return USER_DEFAULT_SCREEN_DPI;
+}
+
+UINT QWindowsContext::getMostPossibleDpiForMonitor(const HMONITOR hMonitor)
+{
+    Q_ASSERT(hMonitor);
+    if (!hMonitor)
+        return 0;
+    UINT dpi = getDpiForMonitor(hMonitor);
+    if (dpi > 0)
+        return dpi;
+    dpi = getDpiForPrimaryMonitor();
+    if (dpi > 0)
+        return dpi;
+    return USER_DEFAULT_SCREEN_DPI;
+}
+
+int QWindowsContext::getResizeBorderThicknessForDpi(const UINT dpi)
+{
+    // The thickness of the padded border will always be 0 if DWM composition is disabled.
+    if (QWindowsApi::instance()->pGetSystemMetricsForDpi) {
+        return QWindowsApi::instance()->pGetSystemMetricsForDpi(SM_CXSIZEFRAME, dpi)
+            + QWindowsApi::instance()->pGetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi);
+    }
+    return GetSystemMetrics(SM_CXSIZEFRAME) + GetSystemMetrics(SM_CXPADDEDBORDER);
+}
+
+int QWindowsContext::getResizeBorderThickness(const HWND hWnd)
+{
+    Q_ASSERT(hWnd);
+    if (!hWnd)
+        return 0;
+    return getResizeBorderThicknessForDpi(getMostPossibleDpiForWindow(hWnd));
+}
+
+int QWindowsContext::getResizeBorderThickness(const HMONITOR hMonitor)
+{
+    Q_ASSERT(hMonitor);
+    if (!hMonitor)
+        return 0;
+    return getResizeBorderThicknessForDpi(getMostPossibleDpiForMonitor(hMonitor));
+}
+
+int QWindowsContext::getTitleBarHeightForDpi(const UINT dpi)
+{
+    const int border = getResizeBorderThicknessForDpi(dpi);
+    if (QWindowsApi::instance()->pGetSystemMetricsForDpi) {
+        return border +
+            QWindowsApi::instance()->pGetSystemMetricsForDpi(SM_CYCAPTION, dpi);
+    }
+    return border + GetSystemMetrics(SM_CYCAPTION);
+}
+
+int QWindowsContext::getTitleBarHeight(const HWND hWnd)
+{
+    Q_ASSERT(hWnd);
+    if (!hWnd)
+        return 0;
+    return getTitleBarHeightForDpi(getMostPossibleDpiForWindow(hWnd));
+}
+
+int QWindowsContext::getTitleBarHeight(const HMONITOR hMonitor)
+{
+    Q_ASSERT(hMonitor);
+    if (!hMonitor)
+        return 0;
+    return getTitleBarHeightForDpi(getMostPossibleDpiForMonitor(hMonitor));
 }
 
 QT_END_NAMESPACE

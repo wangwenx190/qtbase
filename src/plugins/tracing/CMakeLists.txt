@@ -1,6 +1,8 @@
 # Copyright (C) 2022 The Qt Company Ltd.
 # SPDX-License-Identifier: BSD-3-Clause
 
+qt_find_package(WrapZSTD PROVIDED_TARGETS WrapZSTD::WrapZSTD)
+
 function(make_includable input_file output_file)
     get_filename_component(infile "${CMAKE_CURRENT_SOURCE_DIR}/${input_file}" ABSOLUTE)
     set(outfile ${CMAKE_CURRENT_BINARY_DIR}/${output_file})
@@ -18,12 +20,13 @@ qt_internal_add_plugin(QCtfTracePlugin
         qctflib_p.h qctflib.cpp metadata_template.txt qctfplugin.cpp qctfplugin_p.h
         qctfserver_p.h qctfserver.cpp
     LIBRARIES
+        WrapZSTD::WrapZSTD
         Qt::Core Qt::CorePrivate Qt::Network
 )
 
-qt_internal_extend_target(QCtfTracePlugin CONDITION QT_FEATURE_zstd
+qt_internal_extend_target(QCtfTracePlugin CONDITION NOT QT_FEATURE_system_zstd
     LIBRARIES
-        WrapZSTD::WrapZSTD
+        ZstdPrivate
 )
 
 qt_internal_extend_target(QCtfTracePlugin CONDITION (QT_FEATURE_cxx17_filesystem) AND (GCC AND (QMAKE_GCC_MAJOR_VERSION LESS 9))

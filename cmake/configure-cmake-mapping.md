@@ -129,6 +129,7 @@ The following table describes the mapping of configure options to CMake argument
 | -pcre [system/qt]                     | -DFEATURE_system_pcre2=ON/OFF                     |                                                                 |
 | -pps                                  | n/a                                               | QNX feature. Not available for 6.0.                             |
 | -zlib [system/qt]                     | -DFEATURE_system_zlib=ON/OFF                      |                                                                 |
+| -zstd [system/qt]                     | -DFEATURE_system_zstd=ON/OFF                      |                                                                 |
 | -ssl                                  | -DFEATURE_ssl=ON                                  |                                                                 |
 | -openssl [no/yes/linked/runtime]      | -DINPUT_openssl=no/yes/linked/runtime             |                                                                 |
 | -openssl-linked                       | -DINPUT_openssl=linked                            |                                                                 |
