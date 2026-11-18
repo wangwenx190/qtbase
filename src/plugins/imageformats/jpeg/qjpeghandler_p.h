@@ -22,12 +22,12 @@
 
 QT_BEGIN_NAMESPACE
 
-class QJpegHandlerPrivate;
-class QJpegHandler : public QImageIOHandler
+class VantariftJpegHandlerPrivate;
+class VantariftJpegHandler : public QImageIOHandler
 {
 public:
-    QJpegHandler();
-    ~QJpegHandler();
+    VantariftJpegHandler();
+    ~VantariftJpegHandler();
 
     bool canRead() const override;
     bool read(QImage *image) override;
@@ -40,7 +40,7 @@ public:
     bool supportsOption(ImageOption option) const override;
 
 private:
-    QJpegHandlerPrivate *d;
+    VantariftJpegHandlerPrivate *d;
 };
 
 QT_END_NAMESPACE

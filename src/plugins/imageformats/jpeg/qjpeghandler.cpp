@@ -3,6 +3,8 @@
 // Qt-Security score:critical reason:data-parser
 
 #include "qjpeghandler_p.h"
+#include "qt_jpeg_decode_feedback.h"
+#include <QDataStream>
 
 #include <qbuffer.h>
 #include <qcolorspace.h>
@@ -14,9 +16,6 @@
 #include <qloggingcategory.h>
 #include <qmath.h>
 #include <qvariant.h>
-#include <private/qicc_p.h>
-#include <private/qsimd_p.h>
-#include <private/qimage_p.h>   // for qt_getImageText
 
 #include <limits>
 #include <stdio.h>      // jpeglib needs this to be pre-included
@@ -37,18 +36,25 @@ extern "C" {
 
 QT_BEGIN_NAMESPACE
 
-Q_LOGGING_CATEGORY(lcJpeg, "qt.gui.imageio.jpeg")
+Q_LOGGING_CATEGORY(lcFeedbackJpeg, "qt.gui.imageio.jpeg")
 
 QT_WARNING_DISABLE_GCC("-Wclobbered")
 
-Q_GUI_EXPORT void QT_FASTCALL qt_convert_rgb888_to_rgb32(quint32 *dst, const uchar *src, int len);
-typedef void (QT_FASTCALL *Rgb888ToRgb32Converter)(quint32 *dst, const uchar *src, int len);
-
 struct my_error_mgr : public jpeg_error_mgr {
     jmp_buf setjmp_buffer;
+    bool cancelled = false;
 };
 
 extern "C" {
+
+static void feedback_cancel(j_common_ptr cinfo)
+{
+    if (QtJpegFeedback::cancelled()) {
+        auto *error = static_cast<my_error_mgr *>(cinfo->err);
+        error->cancelled = true;
+        longjmp(error->setjmp_buffer, 1);
+    }
+}
 
 static void my_error_exit (j_common_ptr cinfo)
 {
@@ -61,7 +67,7 @@ static void my_output_message(j_common_ptr cinfo)
 {
     char buffer[JMSG_LENGTH_MAX];
     (*cinfo->err->format_message)(cinfo, buffer);
-    qCWarning(lcJpeg,"%s", buffer);
+    qCWarning(lcFeedbackJpeg,"%s", buffer);
 }
 
 }
@@ -87,6 +93,7 @@ static void qt_init_source(j_decompress_ptr)
 
 static boolean qt_fill_input_buffer(j_decompress_ptr cinfo)
 {
+    feedback_cancel(j_common_ptr(cinfo));
     my_jpeg_source_mgr* src = (my_jpeg_source_mgr*)cinfo->src;
     qint64 num_read = 0;
     if (src->memDevice) {
@@ -111,6 +118,7 @@ static boolean qt_fill_input_buffer(j_decompress_ptr cinfo)
 
 static void qt_skip_input_data(j_decompress_ptr cinfo, long num_bytes)
 {
+    feedback_cancel(j_common_ptr(cinfo));
     my_jpeg_source_mgr* src = (my_jpeg_source_mgr*)cinfo->src;
 
     // `dumb' implementation from jpeglib
@@ -134,6 +142,7 @@ static void qt_skip_input_data(j_decompress_ptr cinfo, long num_bytes)
 
 static void qt_term_source(j_decompress_ptr cinfo)
 {
+    feedback_cancel(j_common_ptr(cinfo));
     my_jpeg_source_mgr* src = (my_jpeg_source_mgr*)cinfo->src;
     if (!src->device->isSequential())
         src->device->seek(src->device->pos() - src->bytes_in_buffer);
@@ -218,7 +227,6 @@ static bool ensureValidImage(QImage *dest, struct jpeg_decompress_struct *info,
 static bool read_jpeg_image(QImage *outImage,
                             QSize scaledSize, QRect scaledClipRect,
                             QRect clipRect, int quality,
-                            Rgb888ToRgb32Converter converter,
                             j_decompress_ptr info, struct my_error_mgr* err, bool invertCMYK)
 {
     if (!setjmp(err->setjmp_buffer)) {
@@ -307,6 +315,13 @@ static bool read_jpeg_image(QImage *outImage,
             info->do_fancy_upsampling = FALSE;
         }
 
+        if (info->out_color_space == JCS_RGB) {
+#if Q_BYTE_ORDER == Q_LITTLE_ENDIAN
+            info->out_color_space = JCS_EXT_BGRA;
+#else
+            info->out_color_space = JCS_EXT_ARGB;
+#endif
+        }
         (void) jpeg_calc_output_dimensions(info);
 
         // Determine the clip region to extract.
@@ -356,11 +371,7 @@ static bool read_jpeg_image(QImage *outImage,
                 if (y < 0)
                     continue;   // Haven't reached the starting line yet.
 
-                if (info->output_components == 3) {
-                    uchar *in = rows[0] + clip.x() * 3;
-                    QRgb *out = (QRgb*)outImage->scanLine(y);
-                    converter(out, in, clip.width());
-                } else if (info->out_color_space == JCS_CMYK) {
+                if (info->out_color_space == JCS_CMYK) {
                     uchar *in = rows[0] + clip.x() * 4;
                     quint32 *out = (quint32*)outImage->scanLine(y);
                     if (invertCMYK) {
@@ -371,6 +382,8 @@ static bool read_jpeg_image(QImage *outImage,
                     } else {
                         memcpy(out, in, clip.width() * 4);
                     }
+                } else if (info->output_components == 4) {
+                    memcpy(outImage->scanLine(y), rows[0] + clip.x() * 4, clip.width() * 4);
                 } else if (info->output_components == 1) {
                     // Grayscale.
                     memcpy(outImage->scanLine(y),
@@ -406,345 +419,13 @@ static bool read_jpeg_image(QImage *outImage,
         return !outImage->isNull();
     }
     else {
-        my_output_message(j_common_ptr(info));
+        if (!err->cancelled)
+            my_output_message(j_common_ptr(info));
         return false;
     }
 }
 
-struct my_jpeg_destination_mgr : public jpeg_destination_mgr {
-    // Nothing dynamic - cannot rely on destruction over longjump
-    QIODevice *device;
-    JOCTET buffer[max_buf];
-
-public:
-    my_jpeg_destination_mgr(QIODevice *);
-};
-
-
-extern "C" {
-
-static void qt_init_destination(j_compress_ptr)
-{
-}
-
-static boolean qt_empty_output_buffer(j_compress_ptr cinfo)
-{
-    my_jpeg_destination_mgr* dest = (my_jpeg_destination_mgr*)cinfo->dest;
-
-    int written = dest->device->write((char*)dest->buffer, max_buf);
-    if (written == -1)
-        (*cinfo->err->error_exit)((j_common_ptr)cinfo);
-
-    dest->next_output_byte = dest->buffer;
-    dest->free_in_buffer = max_buf;
-
-    return TRUE;
-}
-
-static void qt_term_destination(j_compress_ptr cinfo)
-{
-    my_jpeg_destination_mgr* dest = (my_jpeg_destination_mgr*)cinfo->dest;
-    qint64 n = max_buf - dest->free_in_buffer;
-
-    qint64 written = dest->device->write((char*)dest->buffer, n);
-    if (written == -1)
-        (*cinfo->err->error_exit)((j_common_ptr)cinfo);
-}
-
-}
-
-inline my_jpeg_destination_mgr::my_jpeg_destination_mgr(QIODevice *device)
-{
-    jpeg_destination_mgr::init_destination = qt_init_destination;
-    jpeg_destination_mgr::empty_output_buffer = qt_empty_output_buffer;
-    jpeg_destination_mgr::term_destination = qt_term_destination;
-    this->device = device;
-    next_output_byte = buffer;
-    free_in_buffer = max_buf;
-}
-
-static constexpr int maxMarkerSize = 65533;
-
-static inline void set_text(const QImage &image, j_compress_ptr cinfo, const QString &description)
-{
-    const QMap<QString, QString> text = qt_getImageText(image, description);
-    for (auto it = text.begin(), end = text.end(); it != end; ++it) {
-        QByteArray comment = it.key().toUtf8();
-        if (!comment.isEmpty())
-            comment += ": ";
-        comment += it.value().toUtf8();
-        if (comment.size() > maxMarkerSize)
-            comment.truncate(maxMarkerSize);
-        jpeg_write_marker(cinfo, JPEG_COM, (const JOCTET *)comment.constData(), comment.size());
-    }
-}
-
-static inline void write_icc_profile(const QImage &image, j_compress_ptr cinfo)
-{
-    const QByteArray iccProfile = image.colorSpace().iccProfile();
-    if (iccProfile.isEmpty())
-        return;
-
-    const QByteArray iccSignature("ICC_PROFILE", 12);
-    constexpr int maxIccMarkerSize = maxMarkerSize - (12 + 2);
-    int index = 0;
-    const int markers = (iccProfile.size() + (maxIccMarkerSize - 1)) / maxIccMarkerSize;
-    Q_ASSERT(markers < 256);
-    for (int marker = 1; marker <= markers; ++marker) {
-        const int len = qMin(iccProfile.size() - index, maxIccMarkerSize);
-        const QByteArray block = iccSignature
-                               + QByteArray(1, char(marker)) + QByteArray(1, char(markers))
-                               + iccProfile.mid(index, len);
-        jpeg_write_marker(cinfo, JPEG_APP0 + 2, reinterpret_cast<const JOCTET *>(block.constData()), block.size());
-        index += len;
-    }
-}
-
-static bool do_write_jpeg_image(struct jpeg_compress_struct &cinfo,
-                                JSAMPROW *row_pointer,
-                                const QImage &image,
-                                QIODevice *device,
-                                int sourceQuality,
-                                const QString &description,
-                                bool optimize,
-                                bool progressive,
-                                bool invertCMYK)
-{
-    bool success = false;
-    const QList<QRgb> cmap = image.colorTable();
-
-    if (image.format() == QImage::Format_Invalid || image.format() == QImage::Format_Alpha8)
-        return false;
-
-    struct my_jpeg_destination_mgr *iod_dest = new my_jpeg_destination_mgr(device);
-    struct my_error_mgr jerr;
-
-    cinfo.err = jpeg_std_error(&jerr);
-    jerr.error_exit = my_error_exit;
-    jerr.output_message = my_output_message;
-
-    if (!setjmp(jerr.setjmp_buffer)) {
-        // WARNING:
-        // this if loop is inside a setjmp/longjmp branch
-        // do not create C++ temporaries here because the destructor may never be called
-        // if you allocate memory, make sure that you can free it (row_pointer[0])
-        jpeg_create_compress(&cinfo);
-
-        cinfo.dest = iod_dest;
-
-        cinfo.image_width = image.width();
-        cinfo.image_height = image.height();
-
-        bool gray = false;
-        switch (image.format()) {
-        case QImage::Format_Mono:
-        case QImage::Format_MonoLSB:
-        case QImage::Format_Indexed8:
-            gray = true;
-            for (int i = image.colorCount(); gray && i; i--) {
-                gray = gray & qIsGray(cmap[i-1]);
-            }
-            cinfo.input_components = gray ? 1 : 3;
-            cinfo.in_color_space = gray ? JCS_GRAYSCALE : JCS_RGB;
-            break;
-        case QImage::Format_Grayscale8:
-        case QImage::Format_Grayscale16:
-            gray = true;
-            cinfo.input_components = 1;
-            cinfo.in_color_space = JCS_GRAYSCALE;
-            break;
-        case QImage::Format_CMYK8888:
-            cinfo.input_components = 4;
-            cinfo.in_color_space = JCS_CMYK;
-            break;
-        default:
-            cinfo.input_components = 3;
-            cinfo.in_color_space = JCS_RGB;
-        }
-
-        jpeg_set_defaults(&cinfo);
-
-        qreal diffInch = qAbs(image.dotsPerMeterX()*2.54/100. - qRound(image.dotsPerMeterX()*2.54/100.))
-                         + qAbs(image.dotsPerMeterY()*2.54/100. - qRound(image.dotsPerMeterY()*2.54/100.));
-        qreal diffCm = (qAbs(image.dotsPerMeterX()/100. - qRound(image.dotsPerMeterX()/100.))
-                        + qAbs(image.dotsPerMeterY()/100. - qRound(image.dotsPerMeterY()/100.)))*2.54;
-        if (diffInch < diffCm) {
-            cinfo.density_unit = 1; // dots/inch
-            cinfo.X_density = qRound(image.dotsPerMeterX()*2.54/100.);
-            cinfo.Y_density = qRound(image.dotsPerMeterY()*2.54/100.);
-        } else {
-            cinfo.density_unit = 2; // dots/cm
-            cinfo.X_density = (image.dotsPerMeterX()+50) / 100;
-            cinfo.Y_density = (image.dotsPerMeterY()+50) / 100;
-        }
-
-        if (optimize)
-            cinfo.optimize_coding = true;
-
-        if (progressive)
-            jpeg_simple_progression(&cinfo);
-
-        int quality = sourceQuality >= 0 ? qMin(int(sourceQuality),100) : 75;
-        jpeg_set_quality(&cinfo, quality, TRUE /* limit to baseline-JPEG values */);
-
-        // If the quality exceeds a certain threshold (such as 90), disable chroma subsampling
-        if (quality > 90) {
-            cinfo.comp_info[0].v_samp_factor = 1;
-            cinfo.comp_info[0].h_samp_factor = 1;
-        }
-
-        jpeg_start_compress(&cinfo, TRUE);
-
-        set_text(image, &cinfo, description);
-        if (cinfo.in_color_space == JCS_RGB || cinfo.in_color_space == JCS_CMYK)
-            write_icc_profile(image, &cinfo);
-
-        row_pointer[0] = new uchar[cinfo.image_width*cinfo.input_components];
-        int w = cinfo.image_width;
-        while (cinfo.next_scanline < cinfo.image_height) {
-            uchar *row = row_pointer[0];
-            switch (image.format()) {
-            case QImage::Format_Mono:
-            case QImage::Format_MonoLSB:
-                if (gray) {
-                    const uchar* data = image.constScanLine(cinfo.next_scanline);
-                    if (image.format() == QImage::Format_MonoLSB) {
-                        for (int i=0; i<w; i++) {
-                            bool bit = !!(*(data + (i >> 3)) & (1 << (i & 7)));
-                            row[i] = qRed(cmap[bit]);
-                        }
-                    } else {
-                        for (int i=0; i<w; i++) {
-                            bool bit = !!(*(data + (i >> 3)) & (1 << (7 -(i & 7))));
-                            row[i] = qRed(cmap[bit]);
-                        }
-                    }
-                } else {
-                    const uchar* data = image.constScanLine(cinfo.next_scanline);
-                    if (image.format() == QImage::Format_MonoLSB) {
-                        for (int i=0; i<w; i++) {
-                            bool bit = !!(*(data + (i >> 3)) & (1 << (i & 7)));
-                            *row++ = qRed(cmap[bit]);
-                            *row++ = qGreen(cmap[bit]);
-                            *row++ = qBlue(cmap[bit]);
-                        }
-                    } else {
-                        for (int i=0; i<w; i++) {
-                            bool bit = !!(*(data + (i >> 3)) & (1 << (7 -(i & 7))));
-                            *row++ = qRed(cmap[bit]);
-                            *row++ = qGreen(cmap[bit]);
-                            *row++ = qBlue(cmap[bit]);
-                        }
-                    }
-                }
-                break;
-            case QImage::Format_Indexed8:
-                if (gray) {
-                    const uchar* pix = image.constScanLine(cinfo.next_scanline);
-                    for (int i=0; i<w; i++) {
-                        *row = qRed(cmap[*pix]);
-                        ++row; ++pix;
-                    }
-                } else {
-                    const uchar* pix = image.constScanLine(cinfo.next_scanline);
-                    for (int i=0; i<w; i++) {
-                        *row++ = qRed(cmap[*pix]);
-                        *row++ = qGreen(cmap[*pix]);
-                        *row++ = qBlue(cmap[*pix]);
-                        ++pix;
-                    }
-                }
-                break;
-            case QImage::Format_Grayscale8:
-                memcpy(row, image.constScanLine(cinfo.next_scanline), w);
-                break;
-            case QImage::Format_Grayscale16:
-                {
-                    QImage rowImg = image.copy(0, cinfo.next_scanline, w, 1).convertToFormat(QImage::Format_Grayscale8);
-                    memcpy(row, rowImg.constScanLine(0), w);
-                }
-                break;
-            case QImage::Format_RGB888:
-                memcpy(row, image.constScanLine(cinfo.next_scanline), w * 3);
-                break;
-            case QImage::Format_RGB32:
-            case QImage::Format_ARGB32:
-            case QImage::Format_ARGB32_Premultiplied:
-                {
-                    const QRgb* rgb = (const QRgb*)image.constScanLine(cinfo.next_scanline);
-                    for (int i=0; i<w; i++) {
-                        *row++ = qRed(*rgb);
-                        *row++ = qGreen(*rgb);
-                        *row++ = qBlue(*rgb);
-                        ++rgb;
-                    }
-                }
-                break;
-            case QImage::Format_CMYK8888: {
-                auto *cmykIn = reinterpret_cast<const quint32 *>(image.constScanLine(cinfo.next_scanline));
-                auto *cmykOut = reinterpret_cast<quint32 *>(row);
-                if (invertCMYK) {
-                    for (int i = 0; i < w; ++i)
-                        cmykOut[i] = 0xffffffffu - cmykIn[i];
-                } else {
-                    memcpy(cmykOut, cmykIn, w * 4);
-                }
-                break;
-            }
-            default:
-                {
-                    // (Testing shows that this way is actually faster than converting to RGB888 + memcpy)
-                    QImage rowImg = image.copy(0, cinfo.next_scanline, w, 1).convertToFormat(QImage::Format_RGB32);
-                    const QRgb* rgb = (const QRgb*)rowImg.constScanLine(0);
-                    for (int i=0; i<w; i++) {
-                        *row++ = qRed(*rgb);
-                        *row++ = qGreen(*rgb);
-                        *row++ = qBlue(*rgb);
-                        ++rgb;
-                    }
-                }
-                break;
-            }
-            jpeg_write_scanlines(&cinfo, row_pointer, 1);
-        }
-
-        jpeg_finish_compress(&cinfo);
-        jpeg_destroy_compress(&cinfo);
-        success = true;
-    } else {
-        my_output_message(j_common_ptr(&cinfo));
-        jpeg_destroy_compress(&cinfo);
-        success = false;
-    }
-
-    delete iod_dest;
-    return success;
-}
-
-static bool write_jpeg_image(const QImage &image,
-                             QIODevice *device,
-                             int sourceQuality,
-                             const QString &description,
-                             bool optimize,
-                             bool progressive,
-                             bool invertCMYK)
-{
-    // protect these objects from the setjmp/longjmp pair inside
-    // do_write_jpeg_image (by making them non-local).
-    struct jpeg_compress_struct cinfo;
-    JSAMPROW row_pointer[1];
-    row_pointer[0] = nullptr;
-
-    const bool success = do_write_jpeg_image(cinfo, row_pointer,
-                                             image, device,
-                                             sourceQuality, description,
-                                             optimize, progressive, invertCMYK);
-
-    delete [] row_pointer[0];
-    return success;
-}
-
-class QJpegHandlerPrivate
+class VantariftJpegHandlerPrivate
 {
 public:
     enum State {
@@ -754,12 +435,12 @@ public:
         Error
     };
 
-    QJpegHandlerPrivate(QJpegHandler *qq)
+    VantariftJpegHandlerPrivate(VantariftJpegHandler *qq)
         : quality(75), transformation(QImageIOHandler::TransformationNone), iod_src(nullptr),
-          rgb888ToRgb32ConverterPtr(qt_convert_rgb888_to_rgb32), state(Ready), optimize(false), progressive(false), q(qq)
+          state(Ready), optimize(false), progressive(false), q(qq)
     {}
 
-    ~QJpegHandlerPrivate()
+    ~VantariftJpegHandlerPrivate()
     {
         if (iod_src)
         {
@@ -802,14 +483,14 @@ public:
     struct my_jpeg_source_mgr * iod_src;
     struct my_error_mgr err;
 
-    Rgb888ToRgb32Converter rgb888ToRgb32ConverterPtr;
+    jpeg_progress_mgr progress{};
 
     State state;
 
     bool optimize;
     bool progressive;
 
-    QJpegHandler *q;
+    VantariftJpegHandler *q;
 };
 
 static const char SupportedJPEGSubtypes[][14] = {
@@ -818,7 +499,7 @@ static const char SupportedJPEGSubtypes[][14] = {
     "CMYK"
 };
 
-static_assert(std::size(SupportedJPEGSubtypes) == size_t(QJpegHandlerPrivate::SubType::NSubTypes));
+static_assert(std::size(SupportedJPEGSubtypes) == size_t(VantariftJpegHandlerPrivate::SubType::NSubTypes));
 
 static bool readExifHeader(QDataStream &stream)
 {
@@ -942,14 +623,14 @@ static QImageIOHandler::Transformations exif2Qt(int exifOrientation)
     case 8: // rotate 270 CW
         return QImageIOHandler::TransformationRotate270;
     }
-    qCWarning(lcJpeg, "Invalid EXIF orientation");
+    qCWarning(lcFeedbackJpeg, "Invalid EXIF orientation");
     return QImageIOHandler::TransformationNone;
 }
 
 /*!
     \internal
 */
-bool QJpegHandlerPrivate::readJpegHeader(QIODevice *device)
+bool VantariftJpegHandlerPrivate::readJpegHeader(QIODevice *device)
 {
     if (state == Ready)
     {
@@ -962,6 +643,8 @@ bool QJpegHandlerPrivate::readJpegHeader(QIODevice *device)
 
         jpeg_create_decompress(&info);
         info.src = iod_src;
+        progress.progress_monitor = feedback_cancel;
+        info.progress = &progress;
         if (const int mbLimit = QImageReader::allocationLimit()) {
             const qint64 bMax = 2 * qint64(mbLimit) * 1024 * 1024; // Some overhead for temp alloc
             info.mem->max_memory_to_use = long(qMin(bMax, qint64(std::numeric_limits<long>::max())));
@@ -1032,15 +715,15 @@ bool QJpegHandlerPrivate::readJpegHeader(QIODevice *device)
     return true;
 }
 
-bool QJpegHandlerPrivate::read(QImage *image)
+bool VantariftJpegHandlerPrivate::read(QImage *image)
 {
     if (state == Ready)
         readJpegHeader(q->device());
 
     if (state == ReadHeader)
     {
-        const bool invertCMYK = subType != QJpegHandlerPrivate::SubType::CMYK;
-        bool success = read_jpeg_image(image, scaledSize, scaledClipRect, clipRect, quality, rgb888ToRgb32ConverterPtr, &info, &err, invertCMYK);
+        const bool invertCMYK = subType != VantariftJpegHandlerPrivate::SubType::CMYK;
+        bool success = read_jpeg_image(image, scaledSize, scaledClipRect, clipRect, quality, &info, &err, invertCMYK);
         if (success) {
             for (int i = 0; i < readTexts.size()-1; i+=2)
                 image->setText(readTexts.at(i), readTexts.at(i+1));
@@ -1058,43 +741,21 @@ bool QJpegHandlerPrivate::read(QImage *image)
     return false;
 }
 
-Q_GUI_EXPORT void QT_FASTCALL qt_convert_rgb888_to_rgb32_neon(quint32 *dst, const uchar *src, int len);
-Q_GUI_EXPORT void QT_FASTCALL qt_convert_rgb888_to_rgb32_ssse3(quint32 *dst, const uchar *src, int len);
-extern "C" void qt_convert_rgb888_to_rgb32_mips_dspr2_asm(quint32 *dst, const uchar *src, int len);
+VantariftJpegHandler::VantariftJpegHandler()
+    : d(new VantariftJpegHandlerPrivate(this))
+{}
 
-QJpegHandler::QJpegHandler()
-    : d(new QJpegHandlerPrivate(this))
-{
-#if defined(__ARM_NEON__)
-    // from qimage_neon.cpp
-    if (qCpuHasFeature(NEON))
-        d->rgb888ToRgb32ConverterPtr = qt_convert_rgb888_to_rgb32_neon;
-#endif
-
-#if defined(QT_COMPILER_SUPPORTS_SSSE3)
-    // from qimage_ssse3.cpps
-    if (qCpuHasFeature(SSSE3)) {
-        d->rgb888ToRgb32ConverterPtr = qt_convert_rgb888_to_rgb32_ssse3;
-    }
-#endif // QT_COMPILER_SUPPORTS_SSSE3
-#if defined(QT_COMPILER_SUPPORTS_MIPS_DSPR2)
-    if (qCpuHasFeature(DSPR2)) {
-        d->rgb888ToRgb32ConverterPtr = qt_convert_rgb888_to_rgb32_mips_dspr2_asm;
-    }
-#endif // QT_COMPILER_SUPPORTS_DSPR2
-}
-
-QJpegHandler::~QJpegHandler()
+VantariftJpegHandler::~VantariftJpegHandler()
 {
     delete d;
 }
 
-bool QJpegHandler::canRead() const
+bool VantariftJpegHandler::canRead() const
 {
-    if (d->state == QJpegHandlerPrivate::Ready && !canRead(device()))
+    if (d->state == VantariftJpegHandlerPrivate::Ready && !canRead(device()))
         return false;
 
-    if (d->state != QJpegHandlerPrivate::Error && d->state != QJpegHandlerPrivate::ReadingEnd) {
+    if (d->state != VantariftJpegHandlerPrivate::Error && d->state != VantariftJpegHandlerPrivate::ReadingEnd) {
         setFormat("jpeg");
         return true;
     }
@@ -1102,10 +763,10 @@ bool QJpegHandler::canRead() const
     return false;
 }
 
-bool QJpegHandler::canRead(QIODevice *device)
+bool VantariftJpegHandler::canRead(QIODevice *device)
 {
     if (!device) {
-        qCWarning(lcJpeg, "QJpegHandler::canRead() called with no device");
+        qCWarning(lcFeedbackJpeg, "VantariftJpegHandler::canRead() called with no device");
         return false;
     }
 
@@ -1115,28 +776,19 @@ bool QJpegHandler::canRead(QIODevice *device)
     return uchar(buffer[0]) == 0xff && uchar(buffer[1]) == 0xd8;
 }
 
-bool QJpegHandler::read(QImage *image)
+bool VantariftJpegHandler::read(QImage *image)
 {
     if (!canRead())
         return false;
     return d->read(image);
 }
 
-extern void qt_imageTransform(QImage &src, QImageIOHandler::Transformations orient);
-
-bool QJpegHandler::write(const QImage &image)
+bool VantariftJpegHandler::write(const QImage &)
 {
-    const bool invertCMYK = d->subType != QJpegHandlerPrivate::SubType::CMYK;
-    if (d->transformation != QImageIOHandler::TransformationNone) {
-        // We don't support writing EXIF headers so apply the transform to the data.
-        QImage img = image;
-        qt_imageTransform(img, d->transformation);
-        return write_jpeg_image(img, device(), d->quality, d->description, d->optimize, d->progressive, invertCMYK);
-    }
-    return write_jpeg_image(image, device(), d->quality, d->description, d->optimize, d->progressive, invertCMYK);
+    return false;
 }
 
-bool QJpegHandler::supportsOption(ImageOption option) const
+bool VantariftJpegHandler::supportsOption(ImageOption option) const
 {
     return option == Quality
         || option == ScaledSize
@@ -1152,7 +804,7 @@ bool QJpegHandler::supportsOption(ImageOption option) const
         || option == ImageTransformation;
 }
 
-QVariant QJpegHandler::option(ImageOption option) const
+QVariant VantariftJpegHandler::option(ImageOption option) const
 {
     switch(option) {
     case Quality:
@@ -1193,7 +845,7 @@ QVariant QJpegHandler::option(ImageOption option) const
     return QVariant();
 }
 
-void QJpegHandler::setOption(ImageOption option, const QVariant &value)
+void VantariftJpegHandler::setOption(ImageOption option, const QVariant &value)
 {
     switch(option) {
     case Quality:
@@ -1215,7 +867,7 @@ void QJpegHandler::setOption(ImageOption option, const QVariant &value)
         const QByteArray subType = value.toByteArray();
         for (size_t i = 0; i < std::size(SupportedJPEGSubtypes); ++i) {
             if (subType == SupportedJPEGSubtypes[i]) {
-                d->subType = QJpegHandlerPrivate::SubType(i);
+                d->subType = VantariftJpegHandlerPrivate::SubType(i);
                 break;
             }
         }

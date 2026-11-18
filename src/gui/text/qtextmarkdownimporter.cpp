@@ -3,7 +3,8 @@
 // Qt-Security score:critical reason:data-parser
 
 #include "qtextmarkdownimporter_p.h"
-#include "qtextdocumentfragment_p.h"
+#include <QFontDatabase>
+#include <QTextBlock>
 #include <QLoggingCategory>
 #if QT_CONFIG(regularexpression)
 #include <QRegularExpression>
@@ -14,11 +15,7 @@
 #include <QTextDocumentFragment>
 #include <QTextList>
 #include <QTextTable>
-#if QT_CONFIG(system_textmarkdownreader)
-#include <md4c.h>
-#else
 #include "../../3rdparty/md4c/md4c.h"
-#endif
 
 QT_BEGIN_NAMESPACE
 
@@ -36,55 +33,55 @@ static constexpr auto crlfMarkerString() noexcept { return "---\r\n"_L1; }
 static const int qtmi_BlockQuoteIndent =
         40; // pixels, same as in QTextHtmlParserNode::initializeProperties
 
-static_assert(int(QTextMarkdownImporter::FeatureCollapseWhitespace) == MD_FLAG_COLLAPSEWHITESPACE);
-static_assert(int(QTextMarkdownImporter::FeaturePermissiveATXHeaders) == MD_FLAG_PERMISSIVEATXHEADERS);
-static_assert(int(QTextMarkdownImporter::FeaturePermissiveURLAutoLinks) == MD_FLAG_PERMISSIVEURLAUTOLINKS);
-static_assert(int(QTextMarkdownImporter::FeaturePermissiveMailAutoLinks) == MD_FLAG_PERMISSIVEEMAILAUTOLINKS);
-static_assert(int(QTextMarkdownImporter::FeatureNoIndentedCodeBlocks) == MD_FLAG_NOINDENTEDCODEBLOCKS);
-static_assert(int(QTextMarkdownImporter::FeatureNoHTMLBlocks) == MD_FLAG_NOHTMLBLOCKS);
-static_assert(int(QTextMarkdownImporter::FeatureNoHTMLSpans) == MD_FLAG_NOHTMLSPANS);
-static_assert(int(QTextMarkdownImporter::FeatureTables) == MD_FLAG_TABLES);
-static_assert(int(QTextMarkdownImporter::FeatureStrikeThrough) == MD_FLAG_STRIKETHROUGH);
-static_assert(int(QTextMarkdownImporter::FeatureUnderline) == MD_FLAG_UNDERLINE);
-static_assert(int(QTextMarkdownImporter::FeaturePermissiveWWWAutoLinks) == MD_FLAG_PERMISSIVEWWWAUTOLINKS);
-static_assert(int(QTextMarkdownImporter::FeaturePermissiveAutoLinks) == MD_FLAG_PERMISSIVEAUTOLINKS);
-static_assert(int(QTextMarkdownImporter::FeatureTasklists) == MD_FLAG_TASKLISTS);
-static_assert(int(QTextMarkdownImporter::FeatureNoHTML) == MD_FLAG_NOHTML);
-static_assert(int(QTextMarkdownImporter::DialectCommonMark) == MD_DIALECT_COMMONMARK);
-static_assert(int(QTextMarkdownImporter::DialectGitHub) ==
-              (MD_DIALECT_GITHUB | MD_FLAG_UNDERLINE | QTextMarkdownImporter::FeatureFrontMatter));
+static_assert(int(VantariftMarkdownImporter::FeatureCollapseWhitespace) == MD_FLAG_COLLAPSEWHITESPACE);
+static_assert(int(VantariftMarkdownImporter::FeaturePermissiveATXHeaders) == MD_FLAG_PERMISSIVEATXHEADERS);
+static_assert(int(VantariftMarkdownImporter::FeaturePermissiveURLAutoLinks) == MD_FLAG_PERMISSIVEURLAUTOLINKS);
+static_assert(int(VantariftMarkdownImporter::FeaturePermissiveMailAutoLinks) == MD_FLAG_PERMISSIVEEMAILAUTOLINKS);
+static_assert(int(VantariftMarkdownImporter::FeatureNoIndentedCodeBlocks) == MD_FLAG_NOINDENTEDCODEBLOCKS);
+static_assert(int(VantariftMarkdownImporter::FeatureNoHTMLBlocks) == MD_FLAG_NOHTMLBLOCKS);
+static_assert(int(VantariftMarkdownImporter::FeatureNoHTMLSpans) == MD_FLAG_NOHTMLSPANS);
+static_assert(int(VantariftMarkdownImporter::FeatureTables) == MD_FLAG_TABLES);
+static_assert(int(VantariftMarkdownImporter::FeatureStrikeThrough) == MD_FLAG_STRIKETHROUGH);
+static_assert(int(VantariftMarkdownImporter::FeatureUnderline) == MD_FLAG_UNDERLINE);
+static_assert(int(VantariftMarkdownImporter::FeaturePermissiveWWWAutoLinks) == MD_FLAG_PERMISSIVEWWWAUTOLINKS);
+static_assert(int(VantariftMarkdownImporter::FeaturePermissiveAutoLinks) == MD_FLAG_PERMISSIVEAUTOLINKS);
+static_assert(int(VantariftMarkdownImporter::FeatureTasklists) == MD_FLAG_TASKLISTS);
+static_assert(int(VantariftMarkdownImporter::FeatureNoHTML) == MD_FLAG_NOHTML);
+static_assert(int(VantariftMarkdownImporter::DialectCommonMark) == MD_DIALECT_COMMONMARK);
+static_assert(int(VantariftMarkdownImporter::DialectGitHub) ==
+              (MD_DIALECT_GITHUB | MD_FLAG_UNDERLINE | VantariftMarkdownImporter::FeatureFrontMatter));
 
 // --------------------------------------------------------
 // MD4C callback function wrappers
 
 static int CbEnterBlock(MD_BLOCKTYPE type, void *detail, void *userdata)
 {
-    QTextMarkdownImporter *mdi = static_cast<QTextMarkdownImporter *>(userdata);
-    return mdi->cbEnterBlock(int(type), detail);
+    VantariftMarkdownImporter *mdi = static_cast<VantariftMarkdownImporter *>(userdata);
+    return mdi->stopped() ? 1 : mdi->cbEnterBlock(int(type), detail);
 }
 
 static int CbLeaveBlock(MD_BLOCKTYPE type, void *detail, void *userdata)
 {
-    QTextMarkdownImporter *mdi = static_cast<QTextMarkdownImporter *>(userdata);
-    return mdi->cbLeaveBlock(int(type), detail);
+    VantariftMarkdownImporter *mdi = static_cast<VantariftMarkdownImporter *>(userdata);
+    return mdi->stopped() ? 1 : mdi->cbLeaveBlock(int(type), detail);
 }
 
 static int CbEnterSpan(MD_SPANTYPE type, void *detail, void *userdata)
 {
-    QTextMarkdownImporter *mdi = static_cast<QTextMarkdownImporter *>(userdata);
-    return mdi->cbEnterSpan(int(type), detail);
+    VantariftMarkdownImporter *mdi = static_cast<VantariftMarkdownImporter *>(userdata);
+    return mdi->stopped() ? 1 : mdi->cbEnterSpan(int(type), detail);
 }
 
 static int CbLeaveSpan(MD_SPANTYPE type, void *detail, void *userdata)
 {
-    QTextMarkdownImporter *mdi = static_cast<QTextMarkdownImporter *>(userdata);
-    return mdi->cbLeaveSpan(int(type), detail);
+    VantariftMarkdownImporter *mdi = static_cast<VantariftMarkdownImporter *>(userdata);
+    return mdi->stopped() ? 1 : mdi->cbLeaveSpan(int(type), detail);
 }
 
 static int CbText(MD_TEXTTYPE type, const MD_CHAR *text, MD_SIZE size, void *userdata)
 {
-    QTextMarkdownImporter *mdi = static_cast<QTextMarkdownImporter *>(userdata);
-    return mdi->cbText(int(type), text, size);
+    VantariftMarkdownImporter *mdi = static_cast<VantariftMarkdownImporter *>(userdata);
+    return mdi->stopped() ? 1 : mdi->cbText(int(type), text, size);
 }
 
 static void CbDebugLog(const char *msg, void *userdata)
@@ -110,15 +107,15 @@ static Qt::Alignment MdAlignment(MD_ALIGN a, Qt::Alignment defaultAlignment = Qt
     }
 }
 
-QTextMarkdownImporter::QTextMarkdownImporter(QTextDocument *doc, QTextMarkdownImporter::Features features)
+VantariftMarkdownImporter::VantariftMarkdownImporter(QTextDocument *doc, VantariftMarkdownImporter::Features features)
   : m_cursor(doc)
   , m_monoFont(QFontDatabase::systemFont(QFontDatabase::FixedFont))
   , m_features(features)
 {
 }
 
-QTextMarkdownImporter::QTextMarkdownImporter(QTextDocument *doc, QTextDocument::MarkdownFeatures features)
-  : QTextMarkdownImporter(doc, static_cast<QTextMarkdownImporter::Features>(int(features)))
+VantariftMarkdownImporter::VantariftMarkdownImporter(QTextDocument *doc, QTextDocument::MarkdownFeatures features)
+  : VantariftMarkdownImporter(doc, static_cast<VantariftMarkdownImporter::Features>(int(features)))
 {
 }
 
@@ -163,8 +160,11 @@ static auto splitFrontMatter(QStringView md)
     return R{frontMatter, md.sliced(endMarkerPos + marker.size())};
 }
 
-void QTextMarkdownImporter::import(const QString &markdown)
+bool VantariftMarkdownImporter::import(const QString &markdown, const std::function<bool()> &cancelled)
 {
+    m_cancelled = cancelled;
+    if (stopped())
+        return false;
     MD_PARSER callbacks = {
         0, // abi_version
         unsigned(m_features),
@@ -174,7 +174,8 @@ void QTextMarkdownImporter::import(const QString &markdown)
         &CbLeaveSpan,
         &CbText,
         &CbDebugLog,
-        nullptr // syntax
+        nullptr, // syntax
+        [](void *data) { return static_cast<VantariftMarkdownImporter *>(data)->stopped() ? 1 : 0; }
     };
     QTextDocument *doc = m_cursor.document();
     const auto defaultFont = doc->defaultFont();
@@ -183,7 +184,7 @@ void QTextMarkdownImporter::import(const QString &markdown)
     qCDebug(lcMD) << "default font" << defaultFont << "mono font" << m_monoFont;
     QStringView md = markdown;
 
-    if (m_features.testFlag(QTextMarkdownImporter::FeatureFrontMatter)) {
+    if (m_features.testFlag(VantariftMarkdownImporter::FeatureFrontMatter)) {
         if (const auto split = splitFrontMatter(md)) {
             doc->setMetaInformation(QTextDocument::FrontMatter, split.frontMatter.toString());
             qCDebug(lcMD) << "extracted FrontMatter: size" << split.frontMatter.size();
@@ -193,11 +194,13 @@ void QTextMarkdownImporter::import(const QString &markdown)
 
     const auto mdUtf8 = md.toUtf8();
     m_cursor.beginEditBlock();
-    md_parse(mdUtf8.constData(), MD_SIZE(mdUtf8.size()), &callbacks, this);
+    const int result = md_parse(mdUtf8.constData(), MD_SIZE(mdUtf8.size()), &callbacks, this);
     m_cursor.endEditBlock();
+    m_cancelled = {};
+    return result == 0;
 }
 
-int QTextMarkdownImporter::cbEnterBlock(int blockType, void *det)
+int VantariftMarkdownImporter::cbEnterBlock(int blockType, void *det)
 {
     m_blockType = blockType;
     switch (blockType) {
@@ -339,7 +342,7 @@ int QTextMarkdownImporter::cbEnterBlock(int blockType, void *det)
     return 0; // no error
 }
 
-int QTextMarkdownImporter::cbLeaveBlock(int blockType, void *detail)
+int VantariftMarkdownImporter::cbLeaveBlock(int blockType, void *detail)
 {
     Q_UNUSED(detail);
     switch (blockType) {
@@ -412,7 +415,7 @@ int QTextMarkdownImporter::cbLeaveBlock(int blockType, void *detail)
     return 0; // no error
 }
 
-int QTextMarkdownImporter::cbEnterSpan(int spanType, void *det)
+int VantariftMarkdownImporter::cbEnterSpan(int spanType, void *det)
 {
     QTextCharFormat charFmt;
     if (!m_spanFormatStack.isEmpty())
@@ -467,7 +470,7 @@ int QTextMarkdownImporter::cbEnterSpan(int spanType, void *det)
     return 0; // no error
 }
 
-int QTextMarkdownImporter::cbLeaveSpan(int spanType, void *detail)
+int VantariftMarkdownImporter::cbLeaveSpan(int spanType, void *detail)
 {
     Q_UNUSED(detail);
     QTextCharFormat charFmt;
@@ -485,7 +488,7 @@ int QTextMarkdownImporter::cbLeaveSpan(int spanType, void *detail)
     return 0; // no error
 }
 
-int QTextMarkdownImporter::cbText(int textType, const char *text, unsigned size)
+int VantariftMarkdownImporter::cbText(int textType, const char *text, unsigned size)
 {
     if (m_needsInsertBlock)
         insertBlock();
@@ -582,8 +585,15 @@ int QTextMarkdownImporter::cbText(int textType, const char *text, unsigned size)
         return 0; // no error
     }
 
-    if (!s.isEmpty())
-        m_cursor.insertText(s);
+    for (qsizetype offset = 0; offset < s.size();) {
+        if (stopped())
+            return 1;
+        qsizetype count = qMin(qsizetype(4096), s.size() - offset);
+        if (offset + count < s.size() && s[offset + count - 1].isHighSurrogate())
+            --count;
+        m_cursor.insertText(s.mid(offset, count));
+        offset += count;
+    }
     if (m_cursor.currentList()) {
         // The list item will indent the list item's text, so we don't need indentation on the block.
         QTextBlockFormat bfmt = m_cursor.blockFormat();
@@ -618,7 +628,7 @@ int QTextMarkdownImporter::cbText(int textType, const char *text, unsigned size)
     come next, and insertBlock() is called just before the actual text
     insertion, to create a new block with the right formatting.
 */
-void QTextMarkdownImporter::insertBlock()
+void VantariftMarkdownImporter::insertBlock()
 {
     QTextCharFormat charFormat;
     if (!m_spanFormatStack.isEmpty())

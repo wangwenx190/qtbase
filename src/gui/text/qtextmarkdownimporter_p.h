@@ -22,7 +22,8 @@
 #include <QtGui/qtextlist.h>
 #include <QtCore/qpointer.h>
 #include <QtCore/qstack.h>
-#include <QtCore/private/qglobal_p.h>
+#include <QtGui/qtextcursor.h>
+#include <functional>
 
 QT_BEGIN_NAMESPACE
 
@@ -30,7 +31,7 @@ class QTextCursor;
 class QTextDocument;
 class QTextTable;
 
-class Q_GUI_EXPORT QTextMarkdownImporter
+class VantariftMarkdownImporter
 {
 public:
     enum Feature {
@@ -56,10 +57,11 @@ public:
     };
     Q_DECLARE_FLAGS(Features, Feature)
 
-    QTextMarkdownImporter(QTextDocument *doc, Features features);
-    QTextMarkdownImporter(QTextDocument *doc, QTextDocument::MarkdownFeatures features);
+    VantariftMarkdownImporter(QTextDocument *doc, Features features);
+    VantariftMarkdownImporter(QTextDocument *doc, QTextDocument::MarkdownFeatures features);
 
-    void import(const QString &markdown);
+    bool import(const QString &markdown, const std::function<bool()> &cancelled);
+    bool stopped() const { return m_cancelled && m_cancelled(); }
 
 public:
     // MD4C callbacks
@@ -73,6 +75,7 @@ private:
     void insertBlock();
 
 private:
+    std::function<bool()> m_cancelled;
     QTextCursor m_cursor;
     QTextTable *m_currentTable = nullptr; // because m_cursor->currentTable() doesn't work
 #if QT_CONFIG(regularexpression)
@@ -105,7 +108,7 @@ private:
     bool m_imageSpan = false;
 };
 
-Q_DECLARE_OPERATORS_FOR_FLAGS(QTextMarkdownImporter::Features)
+Q_DECLARE_OPERATORS_FOR_FLAGS(VantariftMarkdownImporter::Features)
 
 QT_END_NAMESPACE
 

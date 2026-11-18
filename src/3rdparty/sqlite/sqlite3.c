@@ -73246,6 +73246,14 @@ SQLITE_PRIVATE void sqlite3BtreeLeaveCursor(BtCursor *pCur){
 */
 static const char zMagicHeader[] = SQLITE_FILE_HEADER;
 
+/* Vantarift opts in per database, including independently attached files. */
+static const char *btreeMagicHeader(const BtShared *pBt){
+  static const char zVantariftHeader[16] = "VANTARIFT VRI 1";
+  const char *zFilename = sqlite3PagerFilename(pBt->pPager, 1);
+  return sqlite3_uri_boolean(zFilename, "vri", 0)
+       ? zVantariftHeader : zMagicHeader;
+}
+
 /*
 ** Set this global variable to 1 to enable tracing using the TRACE
 ** macro.
@@ -76536,7 +76544,7 @@ static int lockBtree(BtShared *pBt){
     /* EVIDENCE-OF: R-43737-39999 Every valid SQLite database file begins
     ** with the following 16 bytes (in hex): 53 51 4c 69 74 65 20 66 6f 72 6d
     ** 61 74 20 33 00. */
-    if( memcmp(page1, zMagicHeader, 16)!=0 ){
+    if( memcmp(page1, btreeMagicHeader(pBt), 16)!=0 ){
       goto page1_init_failed;
     }
 
@@ -76746,7 +76754,7 @@ static int newDatabase(BtShared *pBt){
   data = pP1->aData;
   rc = sqlite3PagerWrite(pP1->pDbPage);
   if( rc ) return rc;
-  memcpy(data, zMagicHeader, sizeof(zMagicHeader));
+  memcpy(data, btreeMagicHeader(pBt), sizeof(zMagicHeader));
   assert( sizeof(zMagicHeader)==16 );
   data[16] = (u8)((pBt->pageSize>>8)&0xff);
   data[17] = (u8)((pBt->pageSize>>16)&0xff);

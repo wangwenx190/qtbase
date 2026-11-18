@@ -380,6 +380,9 @@ typedef struct MD_PARSER {
     /* Reserved. Set to NULL.
      */
     void (*syntax)(void);
+
+    /* Local extension: polled during analysis as well as output. */
+    int (*cancelled)(void* userdata);
 } MD_PARSER;
 
 

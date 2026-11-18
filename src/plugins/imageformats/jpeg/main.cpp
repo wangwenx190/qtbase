@@ -12,7 +12,7 @@
 
 QT_BEGIN_NAMESPACE
 
-class QJpegPlugin : public QImageIOPlugin
+class VantariftJpegPlugin : public QImageIOPlugin
 {
     Q_OBJECT
     Q_PLUGIN_METADATA(IID "org.qt-project.Qt.QImageIOHandlerFactoryInterface" FILE "jpeg.json")
@@ -21,26 +21,15 @@ public:
     QImageIOHandler *create(QIODevice *device, const QByteArray &format = QByteArray()) const override;
 };
 
-QImageIOPlugin::Capabilities QJpegPlugin::capabilities(QIODevice *device, const QByteArray &format) const
+QImageIOPlugin::Capabilities VantariftJpegPlugin::capabilities(QIODevice *device, const QByteArray &format) const
 {
-    if (format == "jpeg" || format == "jpg" || format == "jfif")
-        return Capabilities(CanRead | CanWrite);
-    if (!format.isEmpty())
-        return { };
-    if (!device->isOpen())
-        return { };
-
-    Capabilities cap;
-    if (device->isReadable() && QJpegHandler::canRead(device))
-        cap |= CanRead;
-    if (device->isWritable())
-        cap |= CanWrite;
-    return cap;
+    Q_UNUSED(device);
+    return format == "vantarift-jpeg" ? Capabilities(CanRead) : Capabilities{};
 }
 
-QImageIOHandler *QJpegPlugin::create(QIODevice *device, const QByteArray &format) const
+QImageIOHandler *VantariftJpegPlugin::create(QIODevice *device, const QByteArray &format) const
 {
-    QImageIOHandler *handler = new QJpegHandler;
+    QImageIOHandler *handler = new VantariftJpegHandler;
     handler->setDevice(device);
     handler->setFormat(format);
     return handler;
